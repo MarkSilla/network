@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Bundle
+import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -20,14 +21,23 @@ import kotlin.concurrent.thread
 
 class MainActivity : ComponentActivity() {
 
+    companion object {
+        private const val DASHBOARD_URL =
+            "https://network-device-dashboard-tydeft.v2.appdeploy.ai"
+    }
+
     private lateinit var statusText: TextView
     private lateinit var progressText: TextView
     private lateinit var devicesText: TextView
     private lateinit var progressBar: ProgressBar
 
-    private lateinit var dashboardInput: EditText
-    private lateinit var routerInput: EditText
     private lateinit var keyInput: EditText
+    private lateinit var routerInput: EditText
+
+    private lateinit var pairButton: Button
+    private lateinit var startButton: Button
+
+    private var paired = false
 
     private val statusReceiver = object : BroadcastReceiver() {
 
@@ -41,8 +51,9 @@ class MainActivity : ComponentActivity() {
             }
 
             val status =
-                intent.getStringExtra(AgentService.EXTRA_STATUS)
-                    ?: "Agent Running"
+                intent.getStringExtra(
+                    AgentService.EXTRA_STATUS
+                ) ?: "Agent Running"
 
             val progress =
                 intent.getIntExtra(
@@ -82,29 +93,80 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onCreate(savedInstanceState: Bundle?) {
+    override fun onCreate(
+        savedInstanceState: Bundle?
+    ) {
+
         super.onCreate(savedInstanceState)
 
-        val layout = LinearLayout(this)
+        val layout =
+            LinearLayout(this).apply {
 
-        layout.orientation = LinearLayout.VERTICAL
-        layout.setPadding(40, 40, 40, 40)
+                orientation =
+                    LinearLayout.VERTICAL
 
-        layout.setBackgroundColor(
-            android.graphics.Color.rgb(10, 15, 25)
-        )
+                setPadding(
+                    40,
+                    40,
+                    40,
+                    40
+                )
 
-        dashboardInput =
-            createInput(
-                "Dashboard URL",
-                "https://network-device-dashboard-tydeft.v2.appdeploy.ai"
-            )
+                setBackgroundColor(
+                    android.graphics.Color.rgb(
+                        10,
+                        15,
+                        25
+                    )
+                )
+            }
 
-        routerInput =
-            createInput(
-                "Router IP",
-                "192.168.100.1"
-            )
+        val title =
+            TextView(this).apply {
+
+                text = "NetWatch Agent"
+
+                textSize = 26f
+
+                setTextColor(
+                    android.graphics.Color.WHITE
+                )
+
+                setPadding(
+                    0,
+                    0,
+                    0,
+                    20
+                )
+            }
+
+        layout.addView(title)
+
+        val subtitle =
+            TextView(this).apply {
+
+                text =
+                    "Enter your Agent Key to pair with the dashboard."
+
+                textSize = 16f
+
+                setTextColor(
+                    android.graphics.Color.LTGRAY
+                )
+
+                setPadding(
+                    0,
+                    0,
+                    0,
+                    20
+                )
+            }
+
+        layout.addView(subtitle)
+
+        /*
+         * AGENT KEY
+         */
 
         keyInput =
             createInput(
@@ -112,97 +174,159 @@ class MainActivity : ComponentActivity() {
                 ""
             )
 
-        layout.addView(dashboardInput)
-        layout.addView(routerInput)
         layout.addView(keyInput)
 
-        statusText = TextView(this)
+        /*
+         * PAIR BUTTON
+         */
 
-        statusText.text =
-            "Dashboard connection not tested"
+        pairButton =
+            Button(this).apply {
 
-        statusText.textSize = 17f
-        statusText.setTextColor(
-            android.graphics.Color.WHITE
-        )
+                text = "PAIR AGENT"
 
-        statusText.setPadding(0, 30, 0, 15)
+                setOnClickListener {
+                    pairAgent()
+                }
+            }
+
+        layout.addView(pairButton)
+
+        /*
+         * STATUS
+         */
+
+        statusText =
+            TextView(this).apply {
+
+                text = "🔴 NOT PAIRED"
+
+                textSize = 18f
+
+                setTextColor(
+                    android.graphics.Color.WHITE
+                )
+
+                setPadding(
+                    0,
+                    25,
+                    0,
+                    10
+                )
+            }
 
         layout.addView(statusText)
 
-        progressText = TextView(this)
+        progressText =
+            TextView(this).apply {
 
-        progressText.text =
-            "Ready"
+                text =
+                    "Enter Agent Key to begin pairing"
 
-        progressText.textSize = 16f
+                textSize = 15f
 
-        progressText.setTextColor(
-            android.graphics.Color.LTGRAY
-        )
+                setTextColor(
+                    android.graphics.Color.LTGRAY
+                )
+            }
 
         layout.addView(progressText)
+
+        /*
+         * ROUTER IP
+         *
+         * Hidden until pairing succeeds.
+         */
+
+        routerInput =
+            createInput(
+                "Router IP",
+                "192.168.100.1"
+            )
+
+        routerInput.visibility =
+            View.GONE
+
+        layout.addView(routerInput)
+
+        /*
+         * START AGENT
+         *
+         * Hidden until pairing succeeds.
+         */
+
+        startButton =
+            Button(this).apply {
+
+                text = "START AGENT"
+
+                visibility =
+                    View.GONE
+
+                setOnClickListener {
+                    startAgent()
+                }
+            }
+
+        layout.addView(startButton)
+
+        /*
+         * PROGRESS
+         */
 
         progressBar =
             ProgressBar(
                 this,
                 null,
                 android.R.attr.progressBarStyleHorizontal
-            )
+            ).apply {
 
-        progressBar.max = 254
-        progressBar.progress = 0
+                max = 254
+
+                progress = 0
+            }
 
         layout.addView(progressBar)
 
-        devicesText = TextView(this)
+        /*
+         * DEVICES
+         */
 
-        devicesText.text =
-            "Devices found: 0"
+        devicesText =
+            TextView(this).apply {
 
-        devicesText.textSize = 15f
+                text =
+                    "Devices found: 0"
 
-        devicesText.setTextColor(
-            android.graphics.Color.LTGRAY
-        )
+                textSize = 15f
 
-        devicesText.setPadding(0, 12, 0, 20)
+                setTextColor(
+                    android.graphics.Color.LTGRAY
+                )
+
+                setPadding(
+                    0,
+                    12,
+                    0,
+                    20
+                )
+            }
 
         layout.addView(devicesText)
 
-        val testButton =
-            Button(this)
-
-        testButton.text =
-            "TEST DASHBOARD CONNECTION"
-
-        testButton.setOnClickListener {
-            testDashboardConnection()
-        }
-
-        layout.addView(testButton)
-
-        val startButton =
-            Button(this)
-
-        startButton.text =
-            "START AGENT"
-
-        startButton.setOnClickListener {
-            startAgent()
-        }
-
-        layout.addView(startButton)
+        /*
+         * STOP
+         */
 
         val stopButton =
-            Button(this)
+            Button(this).apply {
 
-        stopButton.text =
-            "STOP AGENT"
+                text = "STOP AGENT"
 
-        stopButton.setOnClickListener {
-            stopAgent()
-        }
+                setOnClickListener {
+                    stopAgent()
+                }
+            }
 
         layout.addView(stopButton)
 
@@ -211,7 +335,9 @@ class MainActivity : ComponentActivity() {
         ContextCompat.registerReceiver(
             this,
             statusReceiver,
-            IntentFilter(AgentService.ACTION_STATUS),
+            IntentFilter(
+                AgentService.ACTION_STATUS
+            ),
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
     }
@@ -221,79 +347,164 @@ class MainActivity : ComponentActivity() {
         value: String
     ): EditText {
 
-        val input = EditText(this)
+        return EditText(this).apply {
 
-        input.hint = hint
-        input.setText(value)
+            this.hint = hint
 
-        input.setTextColor(
-            android.graphics.Color.WHITE
-        )
+            setText(value)
 
-        input.setHintTextColor(
-            android.graphics.Color.GRAY
-        )
+            setTextColor(
+                android.graphics.Color.WHITE
+            )
 
-        input.setPadding(20, 15, 20, 15)
+            setHintTextColor(
+                android.graphics.Color.GRAY
+            )
 
-        return input
+            setPadding(
+                20,
+                15,
+                20,
+                15
+            )
+        }
     }
 
-    private fun testDashboardConnection() {
+    /*
+     * PAIRING
+     */
+
+    private fun pairAgent() {
+
+        val key =
+            keyInput.text
+                .toString()
+                .trim()
+
+        if (key.isBlank()) {
+
+            statusText.text =
+                "🔴 NOT PAIRED"
+
+            progressText.text =
+                "Enter an Agent Key first"
+
+            return
+        }
+
+        pairButton.isEnabled =
+            false
+
+        keyInput.isEnabled =
+            false
 
         statusText.text =
-            "Testing dashboard connection..."
+            "🟡 PAIRING..."
+
+        progressText.text =
+            "Waiting for dashboard connection..."
 
         thread {
 
             try {
-
-                val dashboard =
-                    dashboardInput.text
-                        .toString()
-                        .trim()
-                        .trimEnd('/')
 
                 val router =
                     routerInput.text
                         .toString()
                         .trim()
 
-                val key =
-                    keyInput.text
-                        .toString()
-                        .trim()
+                /*
+                 * First register this Android agent
+                 * using the supplied Agent Key.
+                 */
 
-                val agentId = getAgentId()
-
-                val url =
-                    "$dashboard/api/agent/register" +
-                            "?agentId=${encode(agentId)}" +
+                val registerUrl =
+                    "$DASHBOARD_URL/api/agent/register" +
+                            "?agentId=${encode(getAgentId())}" +
                             "&routerIp=${encode(router)}" +
                             "&agentKey=${encode(key)}" +
                             "&hostname=${encode(android.os.Build.MODEL)}"
 
-                val result =
-                    getRequest(url)
+                val registerResult =
+                    getRequest(registerUrl)
+
+                if (registerResult.first !in 200..299) {
+
+                    runOnUiThread {
+
+                        statusText.text =
+                            "🔴 NOT PAIRED"
+
+                        progressText.text =
+                            "Dashboard rejected pairing (${registerResult.first})"
+
+                        pairButton.isEnabled =
+                            true
+
+                        keyInput.isEnabled =
+                            true
+                    }
+
+                    return@thread
+                }
+
+                /*
+                 * Registration succeeded.
+                 *
+                 * Now verify that the dashboard
+                 * recognizes this Agent Key.
+                 */
+
+                val statusUrl =
+                    "$DASHBOARD_URL/api/agent/status" +
+                            "?agentKey=${encode(key)}"
+
+                val statusResult =
+                    getRequest(statusUrl)
+
+                if (statusResult.first !in 200..299) {
+
+                    runOnUiThread {
+
+                        statusText.text =
+                            "🟡 WAITING FOR CONNECTION"
+
+                        progressText.text =
+                            "Waiting for dashboard pairing..."
+
+                        pairButton.isEnabled =
+                            true
+
+                        keyInput.isEnabled =
+                            true
+                    }
+
+                    return@thread
+                }
+
+                /*
+                 * Dashboard accepted the Agent Key.
+                 */
 
                 runOnUiThread {
 
-                    if (result.first in 200..299) {
+                    paired =
+                        true
 
-                        statusText.text =
-                            "CONNECTED"
+                    statusText.text =
+                        "🟢 PAIRED / CONNECTED"
 
-                        progressText.text =
-                            "Dashboard connection successful"
+                    progressText.text =
+                        "Agent Key matched. Ready to scan."
 
-                    } else {
+                    routerInput.visibility =
+                        View.VISIBLE
 
-                        statusText.text =
-                            "CONNECTION FAILED (${result.first})"
+                    startButton.visibility =
+                        View.VISIBLE
 
-                        progressText.text =
-                            result.second
-                    }
+                    pairButton.text =
+                        "PAIRED"
                 }
 
             } catch (e: Exception) {
@@ -301,39 +512,62 @@ class MainActivity : ComponentActivity() {
                 runOnUiThread {
 
                     statusText.text =
-                        "CONNECTION FAILED"
+                        "🟡 WAITING FOR CONNECTION"
 
                     progressText.text =
-                        e.message ?: "Unknown error"
+                        e.message
+                            ?: "Dashboard connection failed"
+
+                    pairButton.isEnabled =
+                        true
+
+                    keyInput.isEnabled =
+                        true
                 }
             }
         }
     }
 
+    /*
+     * START SCANNING
+     */
+
     private fun startAgent() {
 
+        if (!paired) {
+            return
+        }
+
         val intent =
-            Intent(this, AgentService::class.java)
+            Intent(
+                this,
+                AgentService::class.java
+            ).apply {
 
-        intent.putExtra(
-            "dashboardUrl",
-            dashboardInput.text.toString().trim()
-        )
+                putExtra(
+                    "dashboardUrl",
+                    DASHBOARD_URL
+                )
 
-        intent.putExtra(
-            "routerIp",
-            routerInput.text.toString().trim()
-        )
+                putExtra(
+                    "routerIp",
+                    routerInput.text
+                        .toString()
+                        .trim()
+                )
 
-        intent.putExtra(
-            "agentKey",
-            keyInput.text.toString().trim()
-        )
+                putExtra(
+                    "agentKey",
+                    keyInput.text
+                        .toString()
+                        .trim()
+                )
 
-        intent.putExtra(
-            "agentId",
-            getAgentId()
-        )
+                putExtra(
+                    "agentId",
+                    getAgentId()
+                )
+            }
 
         ContextCompat.startForegroundService(
             this,
@@ -341,35 +575,58 @@ class MainActivity : ComponentActivity() {
         )
 
         statusText.text =
-            "Agent Running"
+            "🟢 PAIRED / CONNECTED"
 
         progressText.text =
             "Starting local network scan..."
 
-        progressBar.max = 254
-        progressBar.progress = 0
+        progressBar.progress =
+            0
 
         devicesText.text =
             "Devices found: 0"
     }
+
+    /*
+     * STOP
+     */
 
     private fun stopAgent() {
 
         stopService(
-            Intent(this, AgentService::class.java)
+            Intent(
+                this,
+                AgentService::class.java
+            )
         )
 
-        statusText.text =
-            "Agent Stopped"
+        if (paired) {
 
-        progressText.text =
-            "Ready"
+            statusText.text =
+                "🟡 PAIRED • OFFLINE"
 
-        progressBar.progress = 0
+            progressText.text =
+                "Agent stopped"
+
+        } else {
+
+            statusText.text =
+                "🔴 NOT PAIRED"
+
+            progressText.text =
+                "Enter Agent Key to begin pairing"
+        }
+
+        progressBar.progress =
+            0
 
         devicesText.text =
             "Devices found: 0"
     }
+
+    /*
+     * PERSISTENT AGENT ID
+     */
 
     private fun getAgentId(): String {
 
@@ -391,14 +648,19 @@ class MainActivity : ComponentActivity() {
                 "android-${UUID.randomUUID()}"
 
             prefs.edit()
-                .putString("agentId", id)
+                .putString(
+                    "agentId",
+                    id
+                )
                 .apply()
         }
 
         return id
     }
 
-    private fun encode(value: String): String {
+    private fun encode(
+        value: String
+    ): String {
 
         return URLEncoder.encode(
             value,
@@ -412,7 +674,8 @@ class MainActivity : ComponentActivity() {
 
         val connection =
             URL(urlString)
-                .openConnection() as HttpURLConnection
+                .openConnection()
+                    as HttpURLConnection
 
         return try {
 
@@ -443,10 +706,15 @@ class MainActivity : ComponentActivity() {
             val body =
                 stream
                     ?.bufferedReader()
-                    ?.use { it.readText() }
+                    ?.use {
+                        it.readText()
+                    }
                     ?: ""
 
-            Pair(status, body)
+            Pair(
+                status,
+                body
+            )
 
         } finally {
 
@@ -457,7 +725,9 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
 
         try {
-            unregisterReceiver(statusReceiver)
+            unregisterReceiver(
+                statusReceiver
+            )
         } catch (_: Exception) {
         }
 

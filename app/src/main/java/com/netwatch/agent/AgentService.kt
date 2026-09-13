@@ -31,9 +31,8 @@ import java.util.concurrent.TimeUnit
 
 class AgentService : Service() {
 
-    private val serviceScope = CoroutineScope(
-        SupervisorJob() + Dispatchers.IO
-    )
+    private val serviceScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private var running = false
 
@@ -52,10 +51,8 @@ class AgentService : Service() {
         get() = prefs.getString("dashboard", "")?.trimEnd('/') ?: ""
 
     private val routerIp: String
-        get() = prefs.getString(
-            "router",
-            "192.168.100.1"
-        ) ?: "192.168.100.1"
+        get() = prefs.getString("router", "192.168.100.1")
+            ?: "192.168.100.1"
 
     private val agentKey: String
         get() = prefs.getString("key", "") ?: ""
@@ -67,9 +64,7 @@ class AgentService : Service() {
 
         startForeground(
             1001,
-            createNotification(
-                "NetWatch Agent is starting..."
-            )
+            createNotification("Starting NetWatch Agent...")
         )
     }
 
@@ -80,7 +75,6 @@ class AgentService : Service() {
     ): Int {
 
         if (!running) {
-
             running = true
 
             serviceScope.launch {
@@ -97,33 +91,196 @@ class AgentService : Service() {
 
             try {
 
-                if (
-                    dashboardUrl.isNotBlank() &&
-                    agentKey.isNotBlank()
-                ) {
+                if (dashboardUrl.isBlank()) {
+                    updateNotification(
+                        "ERROR • Dashboard URL is empty"
+                    )
+                    delay(5000)
+                    continue
+                }
 
-                    registerAgent()
+                if (agentKey.isBlank()) {
+                    updateNotification(
+                        "ERROR • Agent Key is empty"
+                    )
+                    delay(5000)
+                    continue
+                }
 
-                    val devices =
-                        scanLocalNetwork()
+                updateNotification(
+                    "Connecting to dashboard..."
+                )
 
-                    sendDevices(devices)
+                val registerResult = registerAgent()
+
+                if (!registerResult.success) {
 
                     updateNotification(
-                        "Scanning LAN • ${devices.length()} devices found"
+                        "ERROR • ${registerResult.message}"
+                    )
+
+                    delay(5000)
+                    continue
+                }
+
+                updateNotification(
+                    "CONNECTED • Dashboard OK"
+                )
+
+                val devices = scanLocalNetwork()
+
+                val sendResult = sendDevices(devices)
+
+                if (!sendResult.success) {
+
+                    updateNotification(
+                        "CONNECTED • Upload failed: ${sendResult.message}"
+                    )
+
+                } else {
+
+                    updateNotification(
+                        "CONNECTED • ${devices.length()} devices found"
                     )
                 }
 
             } catch (e: Exception) {
 
                 updateNotification(
-                    "Agent error: ${
-                        e.message ?: "Unknown error"
-                    }"
+                    "ERROR • ${e.message ?: "Unknown error"}"
                 )
             }
 
             delay(5000)
+        }
+    }
+
+    private data class RequestResult(
+        val success: Boolean,
+        val message: String
+    )
+
+    private fun registerAgent(): RequestResult {
+
+        val body = JSONObject()
+
+        body.put("agentId", agentId)
+        body.put("routerIp", routerIp)
+        body.put("agentKey", agentKey)
+        body.put("platform", "android")
+        body.put("version", "1.0.0")
+
+        return postJson(
+            "$dashboardUrl/api/agent/register",
+            body
+        )
+    }
+
+    private fun sendDevices(
+        devices: JSONArray
+    ): RequestResult {
+
+        val body = JSONObject()
+
+        body.put("agentId", agentId)
+        body.put("routerIp", routerIp)
+        body.put("agentKey", agentKey)
+        body.put("devices", devices)
+
+        return postJson(
+            "$dashboardUrl/api/agent/devices",
+            body
+        )
+    }
+
+    private fun postJson(
+        endpoint: String,
+        body: JSONObject
+    ): RequestResult {
+
+        var connection: HttpURLConnection? = null
+
+        return try {
+
+            val url = URL(endpoint)
+
+            connection =
+                url.openConnection() as HttpURLConnection
+
+            connection.requestMethod = "POST"
+
+            connection.setRequestProperty(
+                "Content-Type",
+                "application/json"
+            )
+
+            connection.setRequestProperty(
+                "Accept",
+                "application/json"
+            )
+
+            connection.connectTimeout = 10000
+            connection.readTimeout = 10000
+            connection.doOutput = true
+
+            connection.outputStream.use { output ->
+                output.write(
+                    body.toString()
+                        .toByteArray(Charsets.UTF_8)
+                )
+            }
+
+            val responseCode =
+                connection.responseCode
+
+            val stream =
+                if (responseCode in 200..299) {
+                    connection.inputStream
+                } else {
+                    connection.errorStream
+                }
+
+            val responseText =
+                stream?.use {
+                    BufferedReader(
+                        InputStreamReader(it)
+                    ).readText()
+                } ?: ""
+
+            if (responseCode in 200..299) {
+
+                RequestResult(
+                    true,
+                    "HTTP $responseCode"
+                )
+
+            } else {
+
+                val message =
+                    when (responseCode) {
+                        401 -> "Unauthorized"
+                        403 -> "INVALID AGENT KEY"
+                        404 -> "API endpoint not found"
+                        500 -> "Dashboard server error"
+                        else -> "HTTP $responseCode"
+                    }
+
+                RequestResult(
+                    false,
+                    message
+                )
+            }
+
+        } catch (e: Exception) {
+
+            RequestResult(
+                false,
+                e.message ?: "Connection failed"
+            )
+
+        } finally {
+
+            connection?.disconnect()
         }
     }
 
@@ -139,9 +296,7 @@ class AgentService : Service() {
         val ip =
             wifiManager.connectionInfo.ipAddress
 
-        if (ip == 0) {
-            return null
-        }
+        if (ip == 0) return null
 
         return listOf(
             ip and 0xff,
@@ -205,17 +360,13 @@ class AgentService : Service() {
         val ipLong = ipToLong(ip)
         val maskLong = ipToLong(netmask)
 
-        val network =
-            ipLong and maskLong
+        val network = ipLong and maskLong
 
         val broadcast =
             network or
                 (maskLong.inv() and 0xffffffffL)
 
-        return Pair(
-            network,
-            broadcast
-        )
+        return Pair(network, broadcast)
     }
 
     private suspend fun scanLocalNetwork(): JSONArray =
@@ -227,8 +378,7 @@ class AgentService : Service() {
                 getWifiIpAddress()
                     ?: return@withContext result
 
-            val netmask =
-                getNetmask()
+            val netmask = getNetmask()
 
             val subnet =
                 calculateSubnet(
@@ -236,17 +386,13 @@ class AgentService : Service() {
                     netmask
                 )
 
-            val network =
-                subnet.first
-
-            val broadcast =
-                subnet.second
+            val network = subnet.first
+            val broadcast = subnet.second
 
             val totalHosts =
                 broadcast - network - 1
 
             if (totalHosts > 1024) {
-
                 return@withContext scanUsingArpOnly(
                     result,
                     phoneIp
@@ -263,8 +409,7 @@ class AgentService : Service() {
                         java.util.concurrent.Future<*>
                     >()
 
-                var address =
-                    network + 1
+                var address = network + 1
 
                 while (address < broadcast) {
 
@@ -362,9 +507,7 @@ class AgentService : Service() {
             val address =
                 InetAddress.getByName(ip)
 
-            if (
-                address.isReachable(180)
-            ) {
+            if (address.isReachable(180)) {
                 return true
             }
 
@@ -439,11 +582,8 @@ class AgentService : Service() {
 
                     if (parts.size >= 4) {
 
-                        val ip =
-                            parts[0]
-
-                        val mac =
-                            parts[3]
+                        val ip = parts[0]
+                        val mac = parts[3]
 
                         if (
                             ip != phoneIp &&
@@ -476,9 +616,7 @@ class AgentService : Service() {
         macAddress: String = "Unknown"
     ) {
 
-        for (
-            i in 0 until result.length()
-        ) {
+        for (i in 0 until result.length()) {
 
             val existing =
                 result.optJSONObject(i)
@@ -506,8 +644,7 @@ class AgentService : Service() {
             }
         }
 
-        val device =
-            JSONObject()
+        val device = JSONObject()
 
         device.put(
             "id",
@@ -535,11 +672,8 @@ class AgentService : Service() {
 
         device.put(
             "deviceType",
-            if (isRouter) {
-                "Router"
-            } else {
-                "Unknown"
-            }
+            if (isRouter) "Router"
+            else "Unknown"
         )
 
         device.put(
@@ -568,150 +702,6 @@ class AgentService : Service() {
         )
 
         result.put(device)
-    }
-
-    private fun registerAgent() {
-
-        val body =
-            JSONObject()
-
-        body.put(
-            "agentId",
-            agentId
-        )
-
-        body.put(
-            "routerIp",
-            routerIp
-        )
-
-        body.put(
-            "agentKey",
-            agentKey
-        )
-
-        body.put(
-            "platform",
-            "android"
-        )
-
-        body.put(
-            "version",
-            "1.0.0"
-        )
-
-        postJson(
-            "$dashboardUrl/api/agent/register",
-            body
-        )
-    }
-
-    private fun sendDevices(
-        devices: JSONArray
-    ) {
-
-        val body =
-            JSONObject()
-
-        body.put(
-            "agentId",
-            agentId
-        )
-
-        body.put(
-            "routerIp",
-            routerIp
-        )
-
-        body.put(
-            "agentKey",
-            agentKey
-        )
-
-        body.put(
-            "devices",
-            devices
-        )
-
-        postJson(
-            "$dashboardUrl/api/agent/devices",
-            body
-        )
-    }
-
-    private fun postJson(
-        endpoint: String,
-        body: JSONObject
-    ): String? {
-
-        var connection:
-            HttpURLConnection? = null
-
-        return try {
-
-            val url =
-                URL(endpoint)
-
-            connection =
-                url.openConnection()
-                    as HttpURLConnection
-
-            connection.requestMethod =
-                "POST"
-
-            connection.setRequestProperty(
-                "Content-Type",
-                "application/json"
-            )
-
-            connection.setRequestProperty(
-                "Accept",
-                "application/json"
-            )
-
-            connection.connectTimeout =
-                10000
-
-            connection.readTimeout =
-                10000
-
-            connection.doOutput = true
-
-            connection.outputStream.use { output ->
-
-                output.write(
-                    body.toString()
-                        .toByteArray(
-                            Charsets.UTF_8
-                        )
-                )
-            }
-
-            val stream =
-                if (
-                    connection.responseCode
-                        in 200..299
-                ) {
-                    connection.inputStream
-                } else {
-                    connection.errorStream
-                }
-
-            stream?.use {
-
-                BufferedReader(
-                    InputStreamReader(it)
-                ).readText()
-            }
-
-        } catch (_: Exception) {
-
-            null
-
-        } finally {
-
-            connection?.disconnect()
-        }
     }
 
     private fun createNotification(
@@ -776,7 +766,6 @@ class AgentService : Service() {
     override fun onDestroy() {
 
         running = false
-
         serviceScope.cancel()
 
         super.onDestroy()

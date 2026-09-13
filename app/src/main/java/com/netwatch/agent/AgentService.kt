@@ -36,6 +36,7 @@ class AgentService : Service() {
             }
 
         createChannel()
+
         startForeground(
             1001,
             notification("NetWatch agent is running")
@@ -47,6 +48,7 @@ class AgentService : Service() {
         flags: Int,
         startId: Int
     ): Int {
+
         if (!running) {
             running = true
 
@@ -127,11 +129,13 @@ class AgentService : Service() {
 
         BufferedReader(file.reader()).useLines { lines ->
             lines.drop(1).forEach { line ->
+
                 val parts = line
                     .trim()
                     .split(Regex("\\s+"))
 
                 if (parts.size >= 4 && parts[0] != "0.0.0.0") {
+
                     val ip = parts[0]
                     val mac = parts[3].uppercase()
 
@@ -186,6 +190,7 @@ class AgentService : Service() {
 
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+
             val manager =
                 getSystemService(NotificationManager::class.java)
 
@@ -200,17 +205,21 @@ class AgentService : Service() {
     }
 
     private fun notification(text: String): Notification {
+
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+
             Notification.Builder(this, CHANNEL)
                 .setContentTitle("NetWatch Android Agent")
                 .setContentText(text)
-                .setSmallIcon(android.R.drawable.stat_sys_wifi)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
                 .build()
+
         } else {
+
             Notification.Builder(this)
                 .setContentTitle("NetWatch Android Agent")
                 .setContentText(text)
-                .setSmallIcon(android.R.drawable.stat_sys_wifi)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
                 .build()
         }
     }

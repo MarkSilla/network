@@ -10,14 +10,22 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.URL
+import java.net.Socket
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -30,7 +38,7 @@ class AgentService : Service() {
     private var running = false
 
     private val prefs by lazy {
-        getSharedPreferences("agent_config", Context.MODE_PRIVATE)
+        getSharedPreferences("agent", Context.MODE_PRIVATE)
     }
 
     private val agentId: String
@@ -41,13 +49,16 @@ class AgentService : Service() {
         }
 
     private val dashboardUrl: String
-        get() = prefs.getString("dashboard_url", "")?.trimEnd('/') ?: ""
+        get() = prefs.getString("dashboard", "")?.trimEnd('/') ?: ""
 
     private val routerIp: String
-        get() = prefs.getString("router_ip", "192.168.100.1") ?: "192.168.100.1"
+        get() = prefs.getString(
+            "router",
+            "192.168.100.1"
+        ) ?: "192.168.100.1"
 
     private val agentKey: String
-        get() = prefs.getString("agent_key", "") ?: ""
+        get() = prefs.getString("key", "") ?: ""
 
     override fun onCreate() {
         super.onCreate()
@@ -56,7 +67,9 @@ class AgentService : Service() {
 
         startForeground(
             1001,
-            createNotification("NetWatch Agent is starting...")
+            createNotification(
+                "NetWatch Agent is starting..."
+            )
         )
     }
 
@@ -67,6 +80,7 @@ class AgentService : Service() {
     ): Int {
 
         if (!running) {
+
             running = true
 
             serviceScope.launch {
@@ -83,11 +97,15 @@ class AgentService : Service() {
 
             try {
 
-                if (dashboardUrl.isNotBlank() && agentKey.isNotBlank()) {
+                if (
+                    dashboardUrl.isNotBlank() &&
+                    agentKey.isNotBlank()
+                ) {
 
                     registerAgent()
 
-                    val devices = scanLocalNetwork()
+                    val devices =
+                        scanLocalNetwork()
 
                     sendDevices(devices)
 
@@ -99,7 +117,9 @@ class AgentService : Service() {
             } catch (e: Exception) {
 
                 updateNotification(
-                    "Agent error: ${e.message ?: "Unknown error"}"
+                    "Agent error: ${
+                        e.message ?: "Unknown error"
+                    }"
                 )
             }
 
@@ -107,20 +127,21 @@ class AgentService : Service() {
         }
     }
 
-    /**
-     * Gets the phone's Wi-Fi IP address.
-     */
     @Suppress("DEPRECATION")
     private fun getWifiIpAddress(): String? {
 
         val wifiManager =
-            applicationContext.getSystemService(Context.WIFI_SERVICE)
-                    as? WifiManager
+            applicationContext.getSystemService(
+                Context.WIFI_SERVICE
+            ) as? WifiManager
                 ?: return null
 
-        val ip = wifiManager.connectionInfo.ipAddress
+        val ip =
+            wifiManager.connectionInfo.ipAddress
 
-        if (ip == 0) return null
+        if (ip == 0) {
+            return null
+        }
 
         return listOf(
             ip and 0xff,
@@ -130,18 +151,17 @@ class AgentService : Service() {
         ).joinToString(".")
     }
 
-    /**
-     * Gets DHCP netmask from the Wi-Fi connection.
-     */
     @Suppress("DEPRECATION")
     private fun getNetmask(): String {
 
         val wifiManager =
-            applicationContext.getSystemService(Context.WIFI_SERVICE)
-                    as? WifiManager
+            applicationContext.getSystemService(
+                Context.WIFI_SERVICE
+            ) as? WifiManager
                 ?: return "255.255.255.0"
 
-        val mask = wifiManager.dhcpInfo?.netmask ?: 0
+        val mask =
+            wifiManager.dhcpInfo?.netmask ?: 0
 
         if (mask == 0) {
             return "255.255.255.0"
@@ -155,9 +175,6 @@ class AgentService : Service() {
         ).joinToString(".")
     }
 
-    /**
-     * Converts an IPv4 address into an unsigned integer.
-     */
     private fun ipToLong(ip: String): Long {
 
         val parts = ip.split(".")
@@ -170,9 +187,6 @@ class AgentService : Service() {
         ) and 0xffffffffL
     }
 
-    /**
-     * Converts an unsigned integer into IPv4.
-     */
     private fun longToIp(value: Long): String {
 
         return listOf(
@@ -183,9 +197,6 @@ class AgentService : Service() {
         ).joinToString(".")
     }
 
-    /**
-     * Calculates the local subnet.
-     */
     private fun calculateSubnet(
         ip: String,
         netmask: String
@@ -194,71 +205,81 @@ class AgentService : Service() {
         val ipLong = ipToLong(ip)
         val maskLong = ipToLong(netmask)
 
-        val network = ipLong and maskLong
-        val broadcast = network or (maskLong.inv() and 0xffffffffL)
+        val network =
+            ipLong and maskLong
 
-        return Pair(network, broadcast)
+        val broadcast =
+            network or
+                (maskLong.inv() and 0xffffffffL)
+
+        return Pair(
+            network,
+            broadcast
+        )
     }
 
-    /**
-     * Performs LAN discovery.
-     *
-     * Uses:
-     * 1. ICMP reachability where available
-     * 2. TCP connection attempts on common ports
-     * 3. ARP table
-     */
     private suspend fun scanLocalNetwork(): JSONArray =
         withContext(Dispatchers.IO) {
 
             val result = JSONArray()
 
-            val phoneIp = getWifiIpAddress()
+            val phoneIp =
+                getWifiIpAddress()
+                    ?: return@withContext result
 
-            if (phoneIp == null) {
-                return@withContext result
-            }
+            val netmask =
+                getNetmask()
 
-            val netmask = getNetmask()
+            val subnet =
+                calculateSubnet(
+                    phoneIp,
+                    netmask
+                )
 
-            val subnet = calculateSubnet(
-                phoneIp,
-                netmask
-            )
+            val network =
+                subnet.first
 
-            val network = subnet.first
-            val broadcast = subnet.second
+            val broadcast =
+                subnet.second
 
-            val totalHosts = broadcast - network - 1
+            val totalHosts =
+                broadcast - network - 1
 
-            /*
-             * Prevent huge scans.
-             * Maximum 1024 addresses.
-             */
             if (totalHosts > 1024) {
+
                 return@withContext scanUsingArpOnly(
                     result,
                     phoneIp
                 )
             }
 
-            val executor = Executors.newFixedThreadPool(24)
+            val executor =
+                Executors.newFixedThreadPool(24)
 
             try {
 
-                val futures = mutableListOf<java.util.concurrent.Future<*>>()
+                val futures =
+                    mutableListOf<
+                        java.util.concurrent.Future<*>
+                    >()
 
-                var address = network + 1
+                var address =
+                    network + 1
 
                 while (address < broadcast) {
 
-                    val targetIp = longToIp(address)
+                    val targetIp =
+                        longToIp(address)
 
                     if (targetIp != phoneIp) {
 
                         futures += executor.submit {
 
-                            if (isHostReachable(targetIp)) {
+                            if (
+                                isHostReachable(
+                                    targetIp
+                                )
+                            ) {
 
                                 addDevice(
                                     result,
@@ -275,10 +296,12 @@ class AgentService : Service() {
                 futures.forEach { future ->
 
                     try {
+
                         future.get(
                             1500,
                             TimeUnit.MILLISECONDS
                         )
+
                     } catch (_: Exception) {
                     }
                 }
@@ -295,17 +318,11 @@ class AgentService : Service() {
                 executor.shutdownNow()
             }
 
-            /*
-             * Read ARP table after active scan.
-             */
             readArpTable(
                 result,
                 phoneIp
             )
 
-            /*
-             * Always include router if it is reachable.
-             */
             if (
                 routerIp.isNotBlank() &&
                 routerIp != phoneIp &&
@@ -323,9 +340,6 @@ class AgentService : Service() {
             result
         }
 
-    /**
-     * Fallback when subnet is too large.
-     */
     private fun scanUsingArpOnly(
         result: JSONArray,
         phoneIp: String
@@ -339,19 +353,17 @@ class AgentService : Service() {
         return result
     }
 
-    /**
-     * Tests whether a device responds.
-     */
-    private fun isHostReachable(ip: String): Boolean {
+    private fun isHostReachable(
+        ip: String
+    ): Boolean {
 
         try {
 
-            val address = InetAddress.getByName(ip)
+            val address =
+                InetAddress.getByName(ip)
 
             if (
-                address.isReachable(
-                    180
-                )
+                address.isReachable(180)
             ) {
                 return true
             }
@@ -359,9 +371,6 @@ class AgentService : Service() {
         } catch (_: Exception) {
         }
 
-        /*
-         * Try common TCP ports.
-         */
         val ports = intArrayOf(
             80,
             443,
@@ -376,10 +385,10 @@ class AgentService : Service() {
 
             try {
 
-                java.net.Socket().use { socket ->
+                Socket().use { socket ->
 
                     socket.connect(
-                        java.net.InetSocketAddress(
+                        InetSocketAddress(
                             ip,
                             port
                         ),
@@ -396,9 +405,6 @@ class AgentService : Service() {
         return false
     }
 
-    /**
-     * Reads Android/Linux ARP table.
-     */
     private fun readArpTable(
         result: JSONArray,
         phoneIp: String
@@ -427,16 +433,22 @@ class AgentService : Service() {
 
                     val parts =
                         line.trim()
-                            .split(Regex("\\s+"))
+                            .split(
+                                Regex("\\s+")
+                            )
 
                     if (parts.size >= 4) {
 
-                        val ip = parts[0]
-                        val mac = parts[3]
+                        val ip =
+                            parts[0]
+
+                        val mac =
+                            parts[3]
 
                         if (
                             ip != phoneIp &&
-                            mac != "00:00:00:00:00:00" &&
+                            mac !=
+                                "00:00:00:00:00:00" &&
                             mac.contains(":")
                         ) {
 
@@ -456,9 +468,6 @@ class AgentService : Service() {
         }
     }
 
-    /**
-     * Adds a device without creating duplicates.
-     */
     private fun addDevice(
         result: JSONArray,
         ip: String,
@@ -467,10 +476,9 @@ class AgentService : Service() {
         macAddress: String = "Unknown"
     ) {
 
-        /*
-         * Prevent duplicate IP entries.
-         */
-        for (i in 0 until result.length()) {
+        for (
+            i in 0 until result.length()
+        ) {
 
             val existing =
                 result.optJSONObject(i)
@@ -481,9 +489,6 @@ class AgentService : Service() {
                 ) == ip
             ) {
 
-                /*
-                 * Update MAC if ARP found one.
-                 */
                 if (
                     macAddress != "Unknown" &&
                     existing.optString(
@@ -501,7 +506,8 @@ class AgentService : Service() {
             }
         }
 
-        val device = JSONObject()
+        val device =
+            JSONObject()
 
         device.put(
             "id",
@@ -564,12 +570,10 @@ class AgentService : Service() {
         result.put(device)
     }
 
-    /**
-     * Registers Android agent with dashboard.
-     */
     private fun registerAgent() {
 
-        val body = JSONObject()
+        val body =
+            JSONObject()
 
         body.put(
             "agentId",
@@ -602,14 +606,12 @@ class AgentService : Service() {
         )
     }
 
-    /**
-     * Sends discovered devices to dashboard.
-     */
     private fun sendDevices(
         devices: JSONArray
     ) {
 
-        val body = JSONObject()
+        val body =
+            JSONObject()
 
         body.put(
             "agentId",
@@ -637,15 +639,13 @@ class AgentService : Service() {
         )
     }
 
-    /**
-     * Sends JSON POST request.
-     */
     private fun postJson(
         endpoint: String,
         body: JSONObject
     ): String? {
 
-        var connection: HttpURLConnection? = null
+        var connection:
+            HttpURLConnection? = null
 
         return try {
 
@@ -654,9 +654,10 @@ class AgentService : Service() {
 
             connection =
                 url.openConnection()
-                        as HttpURLConnection
+                    as HttpURLConnection
 
-            connection.requestMethod = "POST"
+            connection.requestMethod =
+                "POST"
 
             connection.setRequestProperty(
                 "Content-Type",
@@ -688,7 +689,8 @@ class AgentService : Service() {
 
             val stream =
                 if (
-                    connection.responseCode in 200..299
+                    connection.responseCode
+                        in 200..299
                 ) {
                     connection.inputStream
                 } else {
@@ -725,7 +727,7 @@ class AgentService : Service() {
             )
             .setContentText(text)
             .setSmallIcon(
-                android.R.drawable.stat_sys_data_wifi
+                android.R.drawable.ic_dialog_info
             )
             .setOngoing(true)
             .build()

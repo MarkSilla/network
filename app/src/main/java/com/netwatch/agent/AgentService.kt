@@ -73,52 +73,56 @@ class AgentService : Service() {
         try {
 
             sendStatus(
-                status = "Connecting to dashboard...",
-                progress = 0,
-                total = 254,
-                found = 0
+                "Connecting to dashboard...",
+                0,
+                254,
+                0
             )
 
-            updateNotification("Connecting to dashboard...")
+            updateNotification(
+                "Connecting to dashboard..."
+            )
 
-            val registerResult = registerAgent()
+            val registerCode = registerAgent()
 
-            if (registerResult != 200) {
+            if (registerCode != 200) {
 
                 sendStatus(
-                    status = "Dashboard registration HTTP $registerResult",
-                    progress = 0,
-                    total = 254,
-                    found = 0
+                    "Dashboard registration HTTP $registerCode",
+                    0,
+                    254,
+                    0
                 )
 
                 updateNotification(
-                    "Dashboard registration HTTP $registerResult"
+                    "Registration HTTP $registerCode"
                 )
             }
 
             sendStatus(
-                status = "Scanning local area network...",
-                progress = 0,
-                total = 254,
-                found = 0
+                "Scanning local area network...",
+                0,
+                254,
+                0
             )
 
             updateNotification(
                 "Scanning local area network..."
             )
 
-            val foundDevices = mutableListOf<String>()
+            val foundDevices =
+                mutableListOf<String>()
 
-            val baseParts = ROUTER_IP.split(".")
+            val baseParts =
+                ROUTER_IP.split(".")
 
             if (baseParts.size != 4) {
 
                 sendStatus(
-                    status = "Invalid router IP",
-                    progress = 0,
-                    total = 254,
-                    found = 0
+                    "Invalid router IP",
+                    0,
+                    254,
+                    0
                 )
 
                 stopAgent()
@@ -134,7 +138,8 @@ class AgentService : Service() {
                     break
                 }
 
-                val ip = "$subnet.$i"
+                val ip =
+                    "$subnet.$i"
 
                 try {
 
@@ -151,10 +156,10 @@ class AgentService : Service() {
                         }
 
                         sendStatus(
-                            status = "Device found: $ip",
-                            progress = i,
-                            total = 254,
-                            found = foundDevices.size
+                            "Device found: $ip",
+                            i,
+                            254,
+                            foundDevices.size
                         )
 
                         updateNotification(
@@ -164,119 +169,156 @@ class AgentService : Service() {
                     } else {
 
                         sendStatus(
-                            status = "Scanning $i/254",
-                            progress = i,
-                            total = 254,
-                            found = foundDevices.size
-                        )
-
-                        updateNotification(
-                            "Scanning $i/254 • ${foundDevices.size} found"
+                            "Scanning $i/254",
+                            i,
+                            254,
+                            foundDevices.size
                         )
                     }
 
                 } catch (_: Exception) {
 
                     sendStatus(
-                        status = "Scanning $i/254",
-                        progress = i,
-                        total = 254,
-                        found = foundDevices.size
+                        "Scanning $i/254",
+                        i,
+                        254,
+                        foundDevices.size
                     )
                 }
 
                 Thread.sleep(25)
             }
 
-            if (running) {
+            if (!running) {
+                return
+            }
 
-                sendStatus(
-                    status = "Scan complete. Reporting devices...",
-                    progress = 254,
-                    total = 254,
-                    found = foundDevices.size
-                )
+            sendStatus(
+                "Scan complete • ${foundDevices.size} devices",
+                254,
+                254,
+                foundDevices.size
+            )
 
-                updateNotification(
-                    "Reporting ${foundDevices.size} devices..."
-                )
+            updateNotification(
+                "Scan complete • ${foundDevices.size} devices"
+            )
 
-                for (ip in foundDevices) {
+            /*
+             * REPORT EACH DEVICE
+             */
+            var uploadedCount = 0
 
-                    if (!running) {
-                        break
-                    }
+            for (ip in foundDevices) {
 
-                    reportDevice(
-                        ip = ip,
-                        foundCount = foundDevices.size
-                    )
-
-                    Thread.sleep(100)
+                if (!running) {
+                    break
                 }
 
-                val finalRegisterResult =
-                    registerAgent()
+                val result =
+                    reportDevice(ip)
 
-                if (finalRegisterResult != 200) {
+                if (result.first in 200..299) {
+
+                    uploadedCount++
 
                     sendStatus(
-                        status = "Agent registration HTTP $finalRegisterResult",
-                        progress = 254,
-                        total = 254,
-                        found = foundDevices.size
+                        "Uploaded $ip • HTTP ${result.first}",
+                        254,
+                        254,
+                        foundDevices.size
+                    )
+
+                    updateNotification(
+                        "Uploaded $uploadedCount/${foundDevices.size}"
+                    )
+
+                } else {
+
+                    sendStatus(
+                        "Upload failed $ip • HTTP ${result.first}",
+                        254,
+                        254,
+                        foundDevices.size
+                    )
+
+                    updateNotification(
+                        "Upload failed • HTTP ${result.first}"
                     )
                 }
 
-                sendStatus(
-                    status = "Agent running • ${foundDevices.size} device found",
-                    progress = 254,
-                    total = 254,
-                    found = foundDevices.size
-                )
+                Thread.sleep(500)
+            }
 
-                updateNotification(
-                    "Agent running • ${foundDevices.size} device found"
-                )
+            if (!running) {
+                return
+            }
 
-                while (running) {
+            /*
+             * KEEP THE FINAL UPLOAD RESULT VISIBLE
+             */
+            sendStatus(
+                "Upload complete • $uploadedCount/${foundDevices.size} uploaded",
+                254,
+                254,
+                foundDevices.size
+            )
 
-                    Thread.sleep(5000)
+            updateNotification(
+                "Upload complete • $uploadedCount/${foundDevices.size}"
+            )
 
-                    if (running) {
+            Thread.sleep(3000)
 
-                        val result =
-                            registerAgent()
+            /*
+             * HEARTBEAT
+             */
+            while (running) {
 
-                        if (result != 200) {
+                Thread.sleep(5000)
 
-                            sendStatus(
-                                status = "Agent heartbeat HTTP $result",
-                                progress = 254,
-                                total = 254,
-                                found = foundDevices.size
-                            )
+                if (!running) {
+                    break
+                }
 
-                        } else {
+                val heartbeatCode =
+                    registerAgent()
 
-                            sendStatus(
-                                status = "Agent running • ${foundDevices.size} device found",
-                                progress = 254,
-                                total = 254,
-                                found = foundDevices.size
-                            )
-                        }
-                    }
+                if (heartbeatCode == 200) {
+
+                    sendStatus(
+                        "Agent running • $uploadedCount/${foundDevices.size} uploaded",
+                        254,
+                        254,
+                        foundDevices.size
+                    )
+
+                    updateNotification(
+                        "Agent running • $uploadedCount/${foundDevices.size} uploaded"
+                    )
+
+                } else {
+
+                    sendStatus(
+                        "Agent heartbeat HTTP $heartbeatCode",
+                        254,
+                        254,
+                        foundDevices.size
+                    )
+
+                    updateNotification(
+                        "Heartbeat HTTP $heartbeatCode"
+                    )
                 }
             }
 
         } catch (e: Exception) {
 
             sendStatus(
-                status = "Agent error: ${e.message ?: "Unknown error"}",
-                progress = 0,
-                total = 254,
-                found = 0
+                "Agent error: ${e.message ?: "Unknown error"}",
+                0,
+                254,
+                0
             )
 
             updateNotification(
@@ -308,11 +350,10 @@ class AgentService : Service() {
     }
 
     private fun reportDevice(
-        ip: String,
-        foundCount: Int
-    ) {
+        ip: String
+    ): Pair<Int, String?> {
 
-        try {
+        return try {
 
             val url =
                 "$DASHBOARD_URL/api/agent/device" +
@@ -329,50 +370,13 @@ class AgentService : Service() {
                         "&latency=${encode("0")}" +
                         "&hostname=${encode(ip)}"
 
-            val result =
-                httpGetWithCode(url)
-
-            val responseCode =
-                result.first
-
-            if (responseCode in 200..299) {
-
-                sendStatus(
-                    status = "Uploaded $ip • HTTP $responseCode",
-                    progress = 254,
-                    total = 254,
-                    found = foundCount
-                )
-
-                updateNotification(
-                    "Uploaded $ip • HTTP $responseCode"
-                )
-
-            } else {
-
-                sendStatus(
-                    status = "Upload $ip failed • HTTP $responseCode",
-                    progress = 254,
-                    total = 254,
-                    found = foundCount
-                )
-
-                updateNotification(
-                    "Upload failed • HTTP $responseCode"
-                )
-            }
+            httpGetWithCode(url)
 
         } catch (e: Exception) {
 
-            sendStatus(
-                status = "Upload error $ip: ${e.message ?: "Unknown error"}",
-                progress = 254,
-                total = 254,
-                found = foundCount
-            )
-
-            updateNotification(
-                "Upload error"
+            Pair(
+                -1,
+                e.message
             )
         }
     }
@@ -390,13 +394,17 @@ class AgentService : Service() {
                 url.openConnection()
                         as java.net.HttpURLConnection
 
-            connection.requestMethod = "GET"
+            connection.requestMethod =
+                "GET"
 
-            connection.connectTimeout = 10000
+            connection.connectTimeout =
+                10000
 
-            connection.readTimeout = 10000
+            connection.readTimeout =
+                10000
 
-            connection.useCaches = false
+            connection.useCaches =
+                false
 
             val responseCode =
                 connection.responseCode
@@ -574,6 +582,7 @@ class AgentService : Service() {
     override fun onBind(
         intent: Intent?
     ): IBinder? {
+
         return null
     }
 }

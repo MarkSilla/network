@@ -142,10 +142,6 @@ class AgentService : Service() {
                 return
             }
 
-            /*
-             * CONNECT TO DASHBOARD
-             */
-
             sendStatus(
                 "Connecting to dashboard...",
                 0,
@@ -188,10 +184,6 @@ class AgentService : Service() {
             updateNotification(
                 "Agent paired • Dashboard connected"
             )
-
-            /*
-             * SCAN LAN
-             */
 
             sendStatus(
                 "Scanning local area network...",
@@ -302,10 +294,6 @@ class AgentService : Service() {
                 "Scan complete • ${foundDevices.size} devices"
             )
 
-            /*
-             * UPLOAD DEVICES
-             */
-
             val uploadCode =
                 reportDevices(foundDevices)
 
@@ -337,10 +325,6 @@ class AgentService : Service() {
             }
 
             Thread.sleep(3000)
-
-            /*
-             * HEARTBEAT
-             */
 
             while (running) {
 
@@ -398,12 +382,6 @@ class AgentService : Service() {
         }
     }
 
-    /*
-     * DASHBOARD CONNECTION / HEARTBEAT
-     *
-     * Uses the same pairing-status endpoint
-     * used by MainActivity.
-     */
     private fun registerAgent(): Int {
 
         return try {
@@ -413,12 +391,57 @@ class AgentService : Service() {
                         "?agentId=${encode(agentId)}" +
                         "&agentKey=${encode(agentKey)}" +
                         "&hostname=${encode("Android Agent")}" +
-                        "&routerIp=${encode(routerIp)}"
+                        "&routerIp=${encode(routerIp)}" +
+                        "&_t=${System.currentTimeMillis()}"
 
             val result =
                 httpGetWithCode(url)
 
-            result.first
+            val code =
+                result.first
+
+            val body =
+                result.second
+
+            if (code !in 200..299) {
+                return code
+            }
+
+            if (body.isNullOrBlank()) {
+                return 502
+            }
+
+            val trimmed =
+                body.trim()
+
+            if (!trimmed.startsWith("{")) {
+                return 502
+            }
+
+            val json =
+                try {
+                    JSONObject(trimmed)
+                } catch (_: Exception) {
+                    return 502
+                }
+
+            val registered =
+                json.optBoolean(
+                    "registered",
+                    false
+                )
+
+            val paired =
+                json.optBoolean(
+                    "paired",
+                    false
+                )
+
+            if (!registered || !paired) {
+                return 403
+            }
+
+            200
 
         } catch (_: Exception) {
 
@@ -426,12 +449,6 @@ class AgentService : Service() {
         }
     }
 
-    /*
-     * UPLOAD ALL SCANNED DEVICES
-     *
-     * Uses:
-     * POST /api/agent/devices
-     */
     private fun reportDevices(
         ips: List<String>
     ): Int {
@@ -556,6 +573,21 @@ class AgentService : Service() {
             connection.useCaches =
                 false
 
+            connection.setRequestProperty(
+                "Accept",
+                "application/json"
+            )
+
+            connection.setRequestProperty(
+                "Cache-Control",
+                "no-cache, no-store, max-age=0"
+            )
+
+            connection.setRequestProperty(
+                "Pragma",
+                "no-cache"
+            )
+
             val responseCode =
                 connection.responseCode
 
@@ -631,6 +663,16 @@ class AgentService : Service() {
             connection.setRequestProperty(
                 "Accept",
                 "application/json"
+            )
+
+            connection.setRequestProperty(
+                "Cache-Control",
+                "no-cache, no-store, max-age=0"
+            )
+
+            connection.setRequestProperty(
+                "Pragma",
+                "no-cache"
             )
 
             connection.outputStream

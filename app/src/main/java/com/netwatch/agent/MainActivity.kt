@@ -1,12 +1,9 @@
 package com.netwatch.agent
 
-import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
-import android.graphics.Color
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -14,477 +11,174 @@ import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
-import android.widget.ProgressBar
 import android.widget.TextView
-import androidx.activity.ComponentActivity
-import androidx.core.content.ContextCompat
+import androidx.appcompat.app.AppCompatActivity
 import org.json.JSONObject
+import java.io.BufferedReader
+import java.io.InputStreamReader
 import java.net.HttpURLConnection
-import java.net.URL
 import java.net.URLEncoder
+import java.net.URL
 import java.util.UUID
-import kotlin.concurrent.thread
 
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
 
     companion object {
-
         private const val DASHBOARD_URL =
             "https://network-device-dashboard-tydeft.v2.appdeploy.ai"
 
-        private const val PREFS_NAME =
-            "netwatch"
-
-        private const val AGENT_ID_KEY =
-            "agentId"
-
-        private const val AGENT_KEY_KEY =
-            "agentKey"
+        private const val PREFS_NAME = "netwatch_agent"
+        private const val PREF_AGENT_ID = "agent_id"
+        private const val PREF_AGENT_KEY = "agent_key"
     }
 
     private lateinit var agentKeyText: TextView
+    private lateinit var agentIdText: TextView
     private lateinit var statusText: TextView
     private lateinit var progressText: TextView
-    private lateinit var devicesText: TextView
-    private lateinit var progressBar: ProgressBar
-    private lateinit var routerInput: EditText
+
+    private lateinit var routerSection: LinearLayout
+    private lateinit var routerIpInput: EditText
 
     private lateinit var copyKeyButton: Button
-    private lateinit var regenerateKeyButton: Button
+    private lateinit var generateKeyButton: Button
     private lateinit var startButton: Button
+    private lateinit var stopButton: Button
 
-    private var paired = false
-    private var checkingPairing = false
+    private val mainHandler = Handler(Looper.getMainLooper())
 
-    private val handler =
-        Handler(Looper.getMainLooper())
+    private var pairingRunnable: Runnable? = null
 
-    private val pairingRunnable =
-        object : Runnable {
+    private var pairedState = false
+    private var agentRunning = false
 
-            override fun run() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
 
-                if (!paired) {
-                    checkPairing()
-                }
+        setContentView(R.layout.activity_main)
 
-                if (!paired) {
-                    handler.postDelayed(
-                        this,
-                        3000
-                    )
-                }
-            }
+        initializeViews()
+        loadSavedAgent()
+
+        updateAgentKeyUI()
+        updatePairingUI()
+
+        copyKeyButton.setOnClickListener {
+            copyAgentKey()
         }
 
-    private val statusReceiver =
-        object : BroadcastReceiver() {
-
-            override fun onReceive(
-                context: Context?,
-                intent: Intent?
-            ) {
-
-                if (
-                    intent?.action !=
-                    AgentService.ACTION_STATUS
-                ) {
-                    return
-                }
-
-                val status =
-                    intent.getStringExtra(
-                        AgentService.EXTRA_STATUS
-                    )
-                        ?: "Agent Running"
-
-                val progress =
-                    intent.getIntExtra(
-                        AgentService.EXTRA_PROGRESS,
-                        0
-                    )
-
-                val total =
-                    intent.getIntExtra(
-                        AgentService.EXTRA_TOTAL,
-                        254
-                    )
-
-                val found =
-                    intent.getIntExtra(
-                        AgentService.EXTRA_FOUND,
-                        0
-                    )
-
-                runOnUiThread {
-
-                    statusText.text =
-                        status
-
-                    progressText.text =
-                        if (
-                            status.contains(
-                                "Scanning",
-                                ignoreCase = true
-                            )
-                        ) {
-                            "Scanning $progress/$total"
-                        } else {
-                            status
-                        }
-
-                    devicesText.text =
-                        "Devices found: $found"
-
-                    progressBar.max =
-                        total
-
-                    progressBar.progress =
-                        progress
-                }
-            }
+        generateKeyButton.setOnClickListener {
+            regenerateAgentKey()
         }
 
-    override fun onCreate(
-        savedInstanceState: Bundle?
-    ) {
-
-        super.onCreate(
-            savedInstanceState
-        )
-
-        val agentId =
-            getAgentId()
-
-        val agentKey =
-            getAgentKey()
-
-        val layout =
-            LinearLayout(this).apply {
-
-                orientation =
-                    LinearLayout.VERTICAL
-
-                setPadding(
-                    40,
-                    40,
-                    40,
-                    40
-                )
-
-                setBackgroundColor(
-                    Color.rgb(
-                        10,
-                        15,
-                        25
-                    )
-                )
-            }
-
-        val title =
-            TextView(this).apply {
-
-                text =
-                    "NetWatch Agent"
-
-                textSize =
-                    26f
-
-                setTextColor(
-                    Color.WHITE
-                )
-
-                setPadding(
-                    0,
-                    0,
-                    0,
-                    20
-                )
-            }
-
-        layout.addView(title)
-
-        val subtitle =
-            TextView(this).apply {
-
-                text =
-                    "This Android device has its own Agent Key. " +
-                    "Open the NetWatch Dashboard on your browser " +
-                    "and pair this Android agent using the key below."
-
-                textSize =
-                    16f
-
-                setTextColor(
-                    Color.LTGRAY
-                )
-
-                setPadding(
-                    0,
-                    0,
-                    0,
-                    25
-                )
-            }
-
-        layout.addView(subtitle)
-
-        val keyLabel =
-            TextView(this).apply {
-
-                text =
-                    "YOUR AGENT KEY"
-
-                textSize =
-                    13f
-
-                setTextColor(
-                    Color.rgb(
-                        120,
-                        180,
-                        255
-                    )
-                )
-
-                setPadding(
-                    0,
-                    0,
-                    0,
-                    8
-                )
-            }
-
-        layout.addView(keyLabel)
-
-        agentKeyText =
-            TextView(this).apply {
-
-                text =
-                    agentKey
-
-                textSize =
-                    16f
-
-                setTextColor(
-                    Color.WHITE
-                )
-
-                setPadding(
-                    20,
-                    20,
-                    20,
-                    20
-                )
-
-                setBackgroundColor(
-                    Color.rgb(
-                        25,
-                        35,
-                        50
-                    )
-                )
-
-                setTextIsSelectable(
-                    true
-                )
-            }
-
-        layout.addView(agentKeyText)
-
-        copyKeyButton =
-            Button(this).apply {
-
-                text =
-                    "COPY AGENT KEY"
-
-                setOnClickListener {
-                    copyAgentKey()
-                }
-            }
-
-        layout.addView(copyKeyButton)
-
-        regenerateKeyButton =
-            Button(this).apply {
-
-                text =
-                    "GENERATE NEW KEY"
-
-                setOnClickListener {
-                    regenerateAgentKey()
-                }
-            }
-
-        layout.addView(regenerateKeyButton)
-
-        val agentIdText =
-            TextView(this).apply {
-
-                text =
-                    "Agent ID: $agentId"
-
-                textSize =
-                    12f
-
-                setTextColor(
-                    Color.GRAY
-                )
-
-                setPadding(
-                    0,
-                    10,
-                    0,
-                    10
-                )
-            }
-
-        layout.addView(agentIdText)
-
-        statusText =
-            TextView(this).apply {
-
-                text =
-                    "🟡 WAITING FOR BROWSER PAIRING"
-
-                textSize =
-                    18f
-
-                setTextColor(
-                    Color.WHITE
-                )
-
-                setPadding(
-                    0,
-                    25,
-                    0,
-                    10
-                )
-            }
-
-        layout.addView(statusText)
-
-        progressText =
-            TextView(this).apply {
-
-                text =
-                    "Connecting to the NetWatch Dashboard..."
-
-                textSize =
-                    15f
-
-                setTextColor(
-                    Color.LTGRAY
-                )
-
-                setPadding(
-                    0,
-                    0,
-                    0,
-                    20
-                )
-            }
-
-        layout.addView(progressText)
-
-        routerInput =
-            createInput(
-                "Router IP",
-                "192.168.100.1"
-            )
-
-        routerInput.visibility =
-            View.GONE
-
-        layout.addView(routerInput)
-
-        startButton =
-            Button(this).apply {
-
-                text =
-                    "START AGENT"
-
-                visibility =
-                    View.GONE
-
-                setOnClickListener {
-                    startAgent()
-                }
-            }
-
-        layout.addView(startButton)
-
-        progressBar =
-            ProgressBar(
-                this,
-                null,
-                android.R.attr.progressBarStyleHorizontal
-            ).apply {
-
-                max =
-                    254
-
-                progress =
-                    0
-            }
-
-        layout.addView(progressBar)
-
-        devicesText =
-            TextView(this).apply {
-
-                text =
-                    "Devices found: 0"
-
-                textSize =
-                    15f
-
-                setTextColor(
-                    Color.LTGRAY
-                )
-
-                setPadding(
-                    0,
-                    12,
-                    0,
-                    20
-                )
-            }
-
-        layout.addView(devicesText)
-
-        val stopButton =
-            Button(this).apply {
-
-                text =
-                    "STOP AGENT"
-
-                setOnClickListener {
-                    stopAgent()
-                }
-            }
-
-        layout.addView(stopButton)
-
-        setContentView(layout)
-
-        ContextCompat.registerReceiver(
-            this,
-            statusReceiver,
-            IntentFilter(
-                AgentService.ACTION_STATUS
-            ),
-            ContextCompat.RECEIVER_NOT_EXPORTED
-        )
+        startButton.setOnClickListener {
+            startAgent()
+        }
+
+        stopButton.setOnClickListener {
+            stopAgent()
+        }
 
         announceAgent()
+    }
+
+    private fun initializeViews() {
+
+        agentKeyText = findViewById(R.id.agentKeyText)
+        agentIdText = findViewById(R.id.agentIdText)
+        statusText = findViewById(R.id.statusText)
+        progressText = findViewById(R.id.progressText)
+
+        routerSection = findViewById(R.id.routerSection)
+        routerIpInput = findViewById(R.id.routerIpInput)
+
+        copyKeyButton = findViewById(R.id.copyKeyButton)
+        generateKeyButton = findViewById(R.id.generateKeyButton)
+
+        startButton = findViewById(R.id.startButton)
+        stopButton = findViewById(R.id.stopButton)
+    }
+
+    private fun getPreferences() =
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    private fun getAgentId(): String {
+
+        val prefs = getPreferences()
+
+        var agentId = prefs.getString(PREF_AGENT_ID, null)
+
+        if (agentId.isNullOrBlank()) {
+
+            agentId = "android-${UUID.randomUUID()}"
+
+            prefs.edit()
+                .putString(PREF_AGENT_ID, agentId)
+                .apply()
+        }
+
+        return agentId
+    }
+
+    private fun getAgentKey(): String {
+
+        val prefs = getPreferences()
+
+        var agentKey = prefs.getString(PREF_AGENT_KEY, null)
+
+        if (agentKey.isNullOrBlank()) {
+
+            agentKey =
+                "NW-${UUID.randomUUID().toString().uppercase()}"
+
+            prefs.edit()
+                .putString(PREF_AGENT_KEY, agentKey)
+                .apply()
+        }
+
+        return agentKey
+    }
+
+    private fun loadSavedAgent() {
+
+        val agentId = getAgentId()
+        val agentKey = getAgentKey()
+
+        agentIdText.text = agentId
+        agentKeyText.text = agentKey
+    }
+
+    private fun updateAgentKeyUI() {
+
+        agentKeyText.text = getAgentKey()
+        agentIdText.text = getAgentId()
+    }
+
+    private fun updatePairingUI() {
+
+        if (pairedState) {
+
+            statusText.text = "🟢 PAIRED"
+
+            routerSection.visibility = View.VISIBLE
+
+            startButton.visibility = View.VISIBLE
+
+        } else {
+
+            statusText.text = "🟡 WAITING FOR BROWSER PAIRING"
+
+            routerSection.visibility = View.GONE
+
+            startButton.visibility = View.GONE
+        }
     }
 
     private fun copyAgentKey() {
 
         val clipboard =
-            getSystemService(
-                Context.CLIPBOARD_SERVICE
-            ) as ClipboardManager
+            getSystemService(Context.CLIPBOARD_SERVICE)
+                    as ClipboardManager
 
         clipboard.setPrimaryClip(
             ClipData.newPlainText(
@@ -499,312 +193,65 @@ class MainActivity : ComponentActivity() {
 
     private fun regenerateAgentKey() {
 
-        if (checkingPairing) {
+        stopAgent()
 
-            progressText.text =
-                "Please wait while the agent is connecting..."
-
-            return
-        }
-
-        stopService(
-            Intent(
-                this,
-                AgentService::class.java
-            )
-        )
-
-        paired =
-            false
-
-        checkingPairing =
-            false
-
-        handler.removeCallbacks(
-            pairingRunnable
-        )
+        pairedState = false
+        agentRunning = false
 
         val newKey =
-            "NW-" +
-            UUID.randomUUID()
-                .toString()
-                .uppercase()
+            "NW-${UUID.randomUUID().toString().uppercase()}"
 
-        getSharedPreferences(
-            PREFS_NAME,
-            Context.MODE_PRIVATE
-        )
+        getPreferences()
             .edit()
-            .putString(
-                AGENT_KEY_KEY,
-                newKey
-            )
+            .putString(PREF_AGENT_KEY, newKey)
             .apply()
 
-        agentKeyText.text =
-            newKey
-
-        routerInput.visibility =
-            View.GONE
-
-        startButton.visibility =
-            View.GONE
-
-        statusText.text =
-            "🟡 NEW AGENT KEY GENERATED"
+        updateAgentKeyUI()
+        updatePairingUI()
 
         progressText.text =
-            "Connecting the new Agent Key..."
+            "New Agent Key generated. Waiting for browser pairing..."
 
         announceAgent()
     }
 
-    private fun createInput(
-        hint: String,
-        value: String
-    ): EditText {
-
-        return EditText(this).apply {
-
-            this.hint =
-                hint
-
-            setText(value)
-
-            setTextColor(
-                Color.WHITE
-            )
-
-            setHintTextColor(
-                Color.GRAY
-            )
-
-            setPadding(
-                20,
-                15,
-                20,
-                15
-            )
-        }
-    }
-
-    /**
-     * INITIAL CONNECTION
-     *
-     * This is the important fix.
-     *
-     * The old version used regex to decide whether
-     * the server registered the agent.
-     *
-     * This version uses JSONObject and reads:
-     *
-     * registered
-     * paired
-     * agentId
-     * status
-     *
-     * It also displays the actual HTTP/connection
-     * error instead of hiding it.
-     */
     private fun announceAgent() {
 
-        if (isFinishing || isDestroyed) {
-            return
-        }
+        Thread {
 
-        if (checkingPairing) {
-            return
-        }
+            runOnUiThread {
 
-        val agentId =
-            getAgentId()
+                statusText.text =
+                    "🟡 CONNECTING TO DASHBOARD"
 
-        val agentKey =
-            getAgentKey()
+                progressText.text =
+                    "Connecting to AppDeploy dashboard..."
+            }
 
-        val hostname =
-            android.os.Build.MODEL
+            val agentId = getAgentId()
+            val agentKey = getAgentKey()
 
-        checkingPairing =
-            true
+            val hostname =
+                android.os.Build.MODEL ?: "Android Agent"
 
-        runOnUiThread {
+            val encodedAgentId =
+                encode(agentId)
 
-            statusText.text =
-                "🟡 CONNECTING TO DASHBOARD"
+            val encodedAgentKey =
+                encode(agentKey)
 
-            progressText.text =
-                "Connecting this Android agent..."
-        }
+            val encodedHostname =
+                encode(hostname)
 
-        thread {
-
-            var connected =
-                false
-
-            var lastError =
-                "Unknown connection error"
+            val url =
+                "$DASHBOARD_URL/api/agent/pairing-status" +
+                        "?agentId=$encodedAgentId" +
+                        "&agentKey=$encodedAgentKey" +
+                        "&hostname=$encodedHostname"
 
             for (attempt in 1..5) {
 
-                if (paired) {
-                    break
-                }
-
                 try {
-
-                    val statusUrl =
-                        "$DASHBOARD_URL/api/agent/pairing-status" +
-                        "?agentId=${encode(agentId)}" +
-                        "&agentKey=${encode(agentKey)}" +
-                        "&hostname=${encode(hostname)}"
-
-                    val result =
-                        getRequest(
-                            statusUrl
-                        )
-
-                    val httpCode =
-                        result.first
-
-                    val responseBody =
-                        result.second
-
-                    if (
-                        httpCode in 200..299
-                    ) {
-
-                        try {
-
-                            val json =
-                                JSONObject(
-                                    responseBody
-                                )
-
-                            val registered =
-                                json.optBoolean(
-                                    "registered",
-                                    false
-                                )
-
-                            val serverPaired =
-                                json.optBoolean(
-                                    "paired",
-                                    false
-                                )
-
-                            if (registered) {
-
-                                connected =
-                                    true
-
-                                lastError =
-                                    ""
-
-                                runOnUiThread {
-
-                                    if (
-                                        serverPaired
-                                    ) {
-
-                                        paired =
-                                            true
-
-                                        statusText.text =
-                                            "🟢 PAIRED"
-
-                                        progressText.text =
-                                            "Browser approved this Android agent."
-
-                                        routerInput.visibility =
-                                            View.VISIBLE
-
-                                        startButton.visibility =
-                                            View.VISIBLE
-
-                                        handler.removeCallbacks(
-                                            pairingRunnable
-                                        )
-
-                                    } else {
-
-                                        statusText.text =
-                                            "🟡 WAITING FOR BROWSER PAIRING"
-
-                                        progressText.text =
-                                            "Agent registered. Paste this Agent Key into the browser dashboard."
-
-                                        routerInput.visibility =
-                                            View.GONE
-
-                                        startButton.visibility =
-                                            View.GONE
-
-                                        handler.removeCallbacks(
-                                            pairingRunnable
-                                        )
-
-                                        handler.post(
-                                            pairingRunnable
-                                        )
-                                    }
-                                }
-
-                                break
-                            }
-
-                            lastError =
-                                "Server connected, but registered=false."
-
-                        } catch (
-                            jsonError: Exception
-                        ) {
-
-                            lastError =
-                                "Invalid server response: " +
-                                (
-                                    jsonError.message
-                                        ?: "Invalid JSON"
-                                )
-                        }
-
-                    } else {
-
-                        lastError =
-                            "HTTP $httpCode"
-
-                        if (
-                            responseBody.isNotBlank()
-                        ) {
-
-                            lastError +=
-                                ": " +
-                                responseBody
-                                    .replace(
-                                        "\n",
-                                        " "
-                                    )
-                                    .take(180)
-                        }
-                    }
-
-                } catch (
-                    e: Exception
-                ) {
-
-                    lastError =
-                        e.javaClass.simpleName +
-                        ": " +
-                        (
-                            e.message
-                                ?: "No details"
-                        )
-                }
-
-                if (!connected) {
-
-                    val errorForUi =
-                        lastError
 
                     runOnUiThread {
 
@@ -812,93 +259,66 @@ class MainActivity : ComponentActivity() {
                             "🟡 RETRYING CONNECTION"
 
                         progressText.text =
-                            "Attempt $attempt/5\n$errorForUi"
+                            "Attempt $attempt/5"
                     }
 
-                    Thread.sleep(
-                        1500
-                    )
-                }
-            }
+                    val result =
+                        getRequest(url)
 
-            checkingPairing =
-                false
+                    val httpCode = result.first
+                    val responseBody = result.second
 
-            if (
-                !connected &&
-                !paired
-            ) {
+                    /*
+                     * IMPORTANT:
+                     *
+                     * The previous error was:
+                     *
+                     * Value <!doctype of type java.lang.String
+                     * cannot be converted to JSONObject
+                     *
+                     * That means the server returned HTML,
+                     * not JSON.
+                     *
+                     * NEVER call JSONObject() blindly.
+                     */
 
-                runOnUiThread {
+                    if (httpCode !in 200..299) {
 
-                    statusText.text =
-                        "🔴 DASHBOARD CONNECTION FAILED"
+                        runOnUiThread {
 
-                    progressText.text =
-                        lastError +
-                        "\n\nThe app will keep checking for the dashboard."
+                            statusText.text =
+                                "🔴 SERVER HTTP ERROR"
 
-                    routerInput.visibility =
-                        View.GONE
+                            progressText.text =
+                                "HTTP $httpCode\n" +
+                                responseBody.take(250)
+                        }
 
-                    startButton.visibility =
-                        View.GONE
-                }
-
-                startPairingPolling()
-            }
-        }
-    }
-
-    /**
-     * PAIRING CHECK
-     *
-     * Once the browser approves the Agent Key,
-     * this detects paired=true.
-     */
-    private fun checkPairing() {
-
-        if (
-            paired ||
-            checkingPairing
-        ) {
-            return
-        }
-
-        val agentId =
-            getAgentId()
-
-        val agentKey =
-            getAgentKey()
-
-        val hostname =
-            android.os.Build.MODEL
-
-        thread {
-
-            try {
-
-                val url =
-                    "$DASHBOARD_URL/api/agent/pairing-status" +
-                    "?agentId=${encode(agentId)}" +
-                    "&agentKey=${encode(agentKey)}" +
-                    "&hostname=${encode(hostname)}"
-
-                val result =
-                    getRequest(url)
-
-                val httpCode =
-                    result.first
-
-                val body =
-                    result.second
-
-                if (
-                    httpCode in 200..299
-                ) {
+                        Thread.sleep(3000)
+                        continue
+                    }
 
                     val json =
-                        JSONObject(body)
+                        parseServerResponse(responseBody)
+
+                    if (json == null) {
+
+                        runOnUiThread {
+
+                            statusText.text =
+                                "🔴 INVALID SERVER RESPONSE"
+
+                            progressText.text =
+                                "HTTP $httpCode\n" +
+                                "Expected JSON but received:\n" +
+                                responseBody
+                                    .replace("\n", " ")
+                                    .take(250)
+                        }
+
+                        Thread.sleep(3000)
+                        continue
+                    }
 
                     val registered =
                         json.optBoolean(
@@ -906,106 +326,312 @@ class MainActivity : ComponentActivity() {
                             false
                         )
 
-                    val serverPaired =
+                    val paired =
                         json.optBoolean(
                             "paired",
                             false
                         )
 
-                    if (registered) {
+                    if (!registered) {
 
                         runOnUiThread {
 
-                            if (
-                                serverPaired
-                            ) {
+                            statusText.text =
+                                "🔴 AGENT NOT REGISTERED"
 
-                                paired =
-                                    true
-
-                                statusText.text =
-                                    "🟢 PAIRED"
-
-                                progressText.text =
-                                    "Browser approved this Android agent."
-
-                                routerInput.visibility =
-                                    View.VISIBLE
-
-                                startButton.visibility =
-                                    View.VISIBLE
-
-                                handler.removeCallbacks(
-                                    pairingRunnable
-                                )
-
-                            } else {
-
-                                statusText.text =
-                                    "🟡 WAITING FOR BROWSER PAIRING"
-
-                                progressText.text =
-                                    "Paste the Agent Key into the browser dashboard."
-                            }
+                            progressText.text =
+                                json.toString()
                         }
+
+                        Thread.sleep(3000)
+                        continue
                     }
-                }
 
-            } catch (
-                e: Exception
-            ) {
+                    pairedState = paired
 
-                runOnUiThread {
+                    if (paired) {
 
-                    if (!paired) {
+                        runOnUiThread {
+
+                            statusText.text =
+                                "🟢 PAIRED"
+
+                            progressText.text =
+                                "Android Agent paired successfully."
+
+                            routerSection.visibility =
+                                View.VISIBLE
+
+                            startButton.visibility =
+                                View.VISIBLE
+                        }
+
+                        startPairingPolling()
+
+                        return@Thread
+                    }
+
+                    runOnUiThread {
 
                         statusText.text =
                             "🟡 WAITING FOR BROWSER PAIRING"
 
                         progressText.text =
-                            "Waiting for browser pairing..."
+                            "Agent Key is registered.\n" +
+                            "Paste the key into the browser dashboard."
+                    }
+
+                    startPairingPolling()
+
+                    return@Thread
+
+                } catch (e: Exception) {
+
+                    runOnUiThread {
+
+                        statusText.text =
+                            "🟡 RETRYING CONNECTION"
+
+                        progressText.text =
+                            "Attempt $attempt/5\n" +
+                            "${e.javaClass.simpleName}: " +
+                            "${e.message ?: "Unknown error"}"
+                    }
+
+                    try {
+                        Thread.sleep(3000)
+                    } catch (_: InterruptedException) {
+                        return@Thread
                     }
                 }
             }
+
+            runOnUiThread {
+
+                statusText.text =
+                    "🔴 DASHBOARD CONNECTION FAILED"
+
+                progressText.text =
+                    "Unable to receive a valid JSON response after 5 attempts."
+            }
+
+        }.start()
+    }
+
+    private fun parseServerResponse(
+        body: String
+    ): JSONObject? {
+
+        val trimmed =
+            body.trim()
+
+        /*
+         * JSON object should begin with {
+         *
+         * If it begins with:
+         *
+         * <!doctype
+         *
+         * then the server returned the website HTML.
+         */
+
+        if (!trimmed.startsWith("{")) {
+
+            return null
+        }
+
+        return try {
+
+            JSONObject(trimmed)
+
+        } catch (_: Exception) {
+
+            null
         }
     }
 
     private fun startPairingPolling() {
 
-        handler.removeCallbacks(
-            pairingRunnable
-        )
-
-        if (!paired) {
-
-            handler.post(
-                pairingRunnable
-            )
+        pairingRunnable?.let {
+            mainHandler.removeCallbacks(it)
         }
+
+        pairingRunnable = object : Runnable {
+
+            override fun run() {
+
+                checkPairing()
+
+                mainHandler.postDelayed(
+                    this,
+                    3000
+                )
+            }
+        }
+
+        mainHandler.post(
+            pairingRunnable!!
+        )
     }
 
-    /**
-     * START AGENT SERVICE
-     */
+    private fun checkPairing() {
+
+        Thread {
+
+            try {
+
+                val agentId =
+                    encode(getAgentId())
+
+                val agentKey =
+                    encode(getAgentKey())
+
+                val hostname =
+                    encode(
+                        android.os.Build.MODEL
+                            ?: "Android Agent"
+                    )
+
+                val url =
+                    "$DASHBOARD_URL/api/agent/pairing-status" +
+                            "?agentId=$agentId" +
+                            "&agentKey=$agentKey" +
+                            "&hostname=$hostname"
+
+                val result =
+                    getRequest(url)
+
+                val code =
+                    result.first
+
+                val body =
+                    result.second
+
+                if (code !in 200..299) {
+
+                    runOnUiThread {
+
+                        progressText.text =
+                            "Pairing check HTTP $code"
+                    }
+
+                    return@Thread
+                }
+
+                val json =
+                    parseServerResponse(body)
+
+                if (json == null) {
+
+                    runOnUiThread {
+
+                        statusText.text =
+                            "🔴 SERVER RETURNED HTML"
+
+                        progressText.text =
+                            body
+                                .replace("\n", " ")
+                                .take(250)
+                    }
+
+                    return@Thread
+                }
+
+                val registered =
+                    json.optBoolean(
+                        "registered",
+                        false
+                    )
+
+                val paired =
+                    json.optBoolean(
+                        "paired",
+                        false
+                    )
+
+                if (!registered) {
+
+                    runOnUiThread {
+
+                        statusText.text =
+                            "🔴 NOT REGISTERED"
+
+                        progressText.text =
+                            json.toString()
+                    }
+
+                    return@Thread
+                }
+
+                if (paired) {
+
+                    pairedState = true
+
+                    runOnUiThread {
+
+                        statusText.text =
+                            "🟢 PAIRED"
+
+                        progressText.text =
+                            "Dashboard pairing approved."
+
+                        routerSection.visibility =
+                            View.VISIBLE
+
+                        startButton.visibility =
+                            View.VISIBLE
+                    }
+
+                } else {
+
+                    pairedState = false
+
+                    runOnUiThread {
+
+                        statusText.text =
+                            "🟡 WAITING FOR BROWSER PAIRING"
+
+                        routerSection.visibility =
+                            View.GONE
+
+                        startButton.visibility =
+                            View.GONE
+                    }
+                }
+
+            } catch (e: Exception) {
+
+                runOnUiThread {
+
+                    progressText.text =
+                        "Pairing check failed:\n" +
+                        "${e.javaClass.simpleName}: " +
+                        "${e.message ?: "Unknown error"}"
+                }
+            }
+
+        }.start()
+    }
+
     private fun startAgent() {
 
-        if (!paired) {
+        if (!pairedState) {
 
             progressText.text =
-                "Pair this Android agent in the browser first."
+                "Pair the Android Agent in the browser first."
 
             return
         }
 
         val routerIp =
-            routerInput.text
+            routerIpInput.text
                 .toString()
                 .trim()
 
         if (routerIp.isBlank()) {
 
-            routerInput.error =
-                "Enter Router IP"
+            routerIpInput.error =
+                "Router IP is required"
 
             return
         }
@@ -1014,180 +640,108 @@ class MainActivity : ComponentActivity() {
             Intent(
                 this,
                 AgentService::class.java
-            ).apply {
+            )
 
-                putExtra(
-                    "agentId",
-                    getAgentId()
-                )
-
-                putExtra(
-                    "agentKey",
-                    getAgentKey()
-                )
-
-                putExtra(
-                    "routerIp",
-                    routerIp
-                )
-
-                putExtra(
-                    "dashboardUrl",
-                    DASHBOARD_URL
-                )
-            }
-
-        ContextCompat.startForegroundService(
-            this,
-            intent
+        intent.putExtra(
+            "agentId",
+            getAgentId()
         )
 
-        statusText.text =
-            "🟢 AGENT RUNNING"
+        intent.putExtra(
+            "agentKey",
+            getAgentKey()
+        )
 
-        progressText.text =
-            "Scanning router $routerIp..."
+        intent.putExtra(
+            "routerIp",
+            routerIp
+        )
+
+        intent.putExtra(
+            "dashboardUrl",
+            DASHBOARD_URL
+        )
+
+        try {
+
+            if (android.os.Build.VERSION.SDK_INT >=
+                android.os.Build.VERSION_CODES.O
+            ) {
+
+                startForegroundService(intent)
+
+            } else {
+
+                startService(intent)
+            }
+
+            agentRunning = true
+
+            statusText.text =
+                "🟢 AGENT RUNNING"
+
+            progressText.text =
+                "Scanning LAN devices..."
+
+            startButton.visibility =
+                View.GONE
+
+            stopButton.visibility =
+                View.VISIBLE
+
+        } catch (e: Exception) {
+
+            statusText.text =
+                "🔴 AGENT START FAILED"
+
+            progressText.text =
+                "${e.javaClass.simpleName}: " +
+                "${e.message}"
+        }
     }
 
-    /**
-     * STOP AGENT SERVICE
-     */
     private fun stopAgent() {
 
-        stopService(
-            Intent(
-                this,
-                AgentService::class.java
-            )
-        )
+        try {
 
-        statusText.text =
-            if (paired) {
+            stopService(
+                Intent(
+                    this,
+                    AgentService::class.java
+                )
+            )
+
+        } catch (_: Exception) {
+        }
+
+        agentRunning = false
+
+        if (pairedState) {
+
+            statusText.text =
                 "🟢 PAIRED"
-            } else {
-                "🟡 WAITING FOR BROWSER PAIRING"
-            }
 
-        progressText.text =
-            if (paired) {
-                "Agent stopped. Press START AGENT to scan again."
-            } else {
-                "Waiting for browser pairing..."
-            }
+            progressText.text =
+                "Agent stopped."
 
-        progressBar.progress =
-            0
+            startButton.visibility =
+                View.VISIBLE
 
-        devicesText.text =
-            "Devices found: 0"
-    }
+            stopButton.visibility =
+                View.GONE
 
-    /**
-     * PERSISTENT AGENT ID
-     */
-    private fun getAgentId(): String {
+        } else {
 
-        val prefs =
-            getSharedPreferences(
-                PREFS_NAME,
-                Context.MODE_PRIVATE
-            )
-
-        val existing =
-            prefs.getString(
-                AGENT_ID_KEY,
-                null
-            )
-
-        if (
-            !existing.isNullOrBlank()
-        ) {
-            return existing
+            updatePairingUI()
         }
-
-        val newId =
-            "android-" +
-            UUID.randomUUID()
-
-        prefs.edit()
-            .putString(
-                AGENT_ID_KEY,
-                newId
-            )
-            .apply()
-
-        return newId
     }
 
-    /**
-     * PERSISTENT AGENT KEY
-     */
-    private fun getAgentKey(): String {
-
-        val prefs =
-            getSharedPreferences(
-                PREFS_NAME,
-                Context.MODE_PRIVATE
-            )
-
-        val existing =
-            prefs.getString(
-                AGENT_KEY_KEY,
-                null
-            )
-
-        if (
-            !existing.isNullOrBlank()
-        ) {
-            return existing
-        }
-
-        val newKey =
-            "NW-" +
-            UUID.randomUUID()
-                .toString()
-                .uppercase()
-
-        prefs.edit()
-            .putString(
-                AGENT_KEY_KEY,
-                newKey
-            )
-            .apply()
-
-        return newKey
-    }
-
-    /**
-     * URL ENCODING
-     */
-    private fun encode(
-        value: String
-    ): String {
-
-        return URLEncoder.encode(
-            value,
-            "UTF-8"
-        )
-    }
-
-    /**
-     * HTTP GET
-     *
-     * Returns:
-     *
-     * Pair(
-     *     HTTP status code,
-     *     response body
-     * )
-     */
     private fun getRequest(
         urlString: String
     ): Pair<Int, String> {
 
         var connection:
-            HttpURLConnection? =
-            null
+                HttpURLConnection? = null
 
         return try {
 
@@ -1196,52 +750,56 @@ class MainActivity : ComponentActivity() {
 
             connection =
                 url.openConnection()
-                    as HttpURLConnection
+                        as HttpURLConnection
 
             connection.requestMethod =
                 "GET"
 
             connection.connectTimeout =
-                10_000
+                10000
 
             connection.readTimeout =
-                10_000
+                10000
 
             connection.useCaches =
                 false
-
-            connection.instanceFollowRedirects =
-                true
 
             connection.setRequestProperty(
                 "Accept",
                 "application/json"
             )
 
-            val responseCode =
+            connection.setRequestProperty(
+                "Cache-Control",
+                "no-cache"
+            )
+
+            val code =
                 connection.responseCode
 
             val stream =
-                if (
-                    responseCode in 200..299
-                ) {
+                if (code in 200..299) {
                     connection.inputStream
                 } else {
                     connection.errorStream
                 }
 
             val body =
-                stream
-                    ?.bufferedReader()
-                    ?.use {
-                        it.readText()
-                    }
-                    ?: ""
+                if (stream != null) {
 
-            Pair(
-                responseCode,
-                body
-            )
+                    BufferedReader(
+                        InputStreamReader(stream)
+                    ).use { reader ->
+
+                        reader
+                            .readText()
+                    }
+
+                } else {
+                    ""
+                }
+
+            Pair(code, body)
 
         } finally {
 
@@ -1249,22 +807,21 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun encode(
+        value: String
+    ): String {
+
+        return URLEncoder
+            .encode(
+                value,
+                "UTF-8"
+            )
+    }
+
     override fun onDestroy() {
 
-        handler.removeCallbacks(
-            pairingRunnable
-        )
-
-        try {
-
-            unregisterReceiver(
-                statusReceiver
-            )
-
-        } catch (
-            _: Exception
-        ) {
-            // Receiver was already unregistered.
+        pairingRunnable?.let {
+            mainHandler.removeCallbacks(it)
         }
 
         super.onDestroy()

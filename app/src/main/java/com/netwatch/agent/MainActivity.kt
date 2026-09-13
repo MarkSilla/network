@@ -18,7 +18,11 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val prefs = getSharedPreferences("agent", MODE_PRIVATE)
+        val prefs =
+            getSharedPreferences(
+                "agent",
+                MODE_PRIVATE
+            )
 
         dashboard = field(
             "Dashboard URL",
@@ -62,14 +66,16 @@ class MainActivity : AppCompatActivity() {
                     )
                     .apply()
 
-                val intent = Intent(
-                    this@MainActivity,
-                    AgentService::class.java
-                )
+                val intent =
+                    Intent(
+                        this@MainActivity,
+                        AgentService::class.java
+                    )
 
                 startForegroundService(intent)
 
-                status.text = "Agent running"
+                status.text =
+                    "Agent starting...\nCheck notification for connection status."
             }
         }
 
@@ -90,44 +96,47 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        val root = LinearLayout(this).apply {
+        val root =
+            LinearLayout(this).apply {
 
-            orientation = LinearLayout.VERTICAL
+                orientation =
+                    LinearLayout.VERTICAL
 
-            setPadding(
-                32,
-                40,
-                32,
-                32
-            )
+                setPadding(
+                    32,
+                    40,
+                    32,
+                    32
+                )
 
-            addView(
-                TextView(context).apply {
-                    text = "NetWatch Android Agent"
-                    textSize = 24f
-                }
-            )
+                addView(
+                    TextView(context).apply {
+                        text =
+                            "NetWatch Android Agent"
+                        textSize = 24f
+                    }
+                )
 
-            addView(
-                TextView(context).apply {
-                    text =
-                        "Connect this phone to the same Wi-Fi as the monitored router."
-                    setPadding(
-                        0,
-                        8,
-                        0,
-                        20
-                    )
-                }
-            )
+                addView(
+                    TextView(context).apply {
+                        text =
+                            "Connect this phone to the same Wi-Fi as the monitored network."
+                        setPadding(
+                            0,
+                            8,
+                            0,
+                            20
+                        )
+                    }
+                )
 
-            addView(dashboard)
-            addView(router)
-            addView(key)
-            addView(start)
-            addView(stop)
-            addView(status)
-        }
+                addView(dashboard)
+                addView(router)
+                addView(key)
+                addView(start)
+                addView(stop)
+                addView(status)
+            }
 
         setContentView(root)
     }
@@ -138,8 +147,10 @@ class MainActivity : AppCompatActivity() {
     ): EditText {
 
         return EditText(this).apply {
+
             hint = label
             setText(value)
+
             setPadding(
                 0,
                 14,

@@ -11,8 +11,6 @@ import androidx.core.app.NotificationCompat
 import java.net.InetAddress
 import java.net.URL
 import java.net.URLEncoder
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 
 class AgentService : Service() {
 
@@ -73,6 +71,7 @@ class AgentService : Service() {
     private fun runAgent() {
 
         try {
+
             sendStatus(
                 status = "Connecting to dashboard...",
                 progress = 0,
@@ -82,7 +81,21 @@ class AgentService : Service() {
 
             updateNotification("Connecting to dashboard...")
 
-            registerAgent()
+            val registerResult = registerAgent()
+
+            if (registerResult != 200) {
+
+                sendStatus(
+                    status = "Dashboard registration HTTP $registerResult",
+                    progress = 0,
+                    total = 254,
+                    found = 0
+                )
+
+                updateNotification(
+                    "Dashboard registration HTTP $registerResult"
+                )
+            }
 
             sendStatus(
                 status = "Scanning local area network...",
@@ -91,13 +104,16 @@ class AgentService : Service() {
                 found = 0
             )
 
-            updateNotification("Scanning local area network...")
+            updateNotification(
+                "Scanning local area network..."
+            )
 
             val foundDevices = mutableListOf<String>()
 
             val baseParts = ROUTER_IP.split(".")
 
             if (baseParts.size != 4) {
+
                 sendStatus(
                     status = "Invalid router IP",
                     progress = 0,
@@ -122,7 +138,8 @@ class AgentService : Service() {
 
                 try {
 
-                    val address = InetAddress.getByName(ip)
+                    val address =
+                        InetAddress.getByName(ip)
 
                     val reachable =
                         address.isReachable(250)
@@ -190,22 +207,36 @@ class AgentService : Service() {
                         break
                     }
 
-                    reportDevice(ip)
+                    reportDevice(
+                        ip = ip,
+                        foundCount = foundDevices.size
+                    )
 
                     Thread.sleep(100)
                 }
 
-                registerAgent()
+                val finalRegisterResult =
+                    registerAgent()
+
+                if (finalRegisterResult != 200) {
+
+                    sendStatus(
+                        status = "Agent registration HTTP $finalRegisterResult",
+                        progress = 254,
+                        total = 254,
+                        found = foundDevices.size
+                    )
+                }
 
                 sendStatus(
-                    status = "Agent running • ${foundDevices.size} devices found",
+                    status = "Agent running • ${foundDevices.size} device found",
                     progress = 254,
                     total = 254,
                     found = foundDevices.size
                 )
 
                 updateNotification(
-                    "Agent running • ${foundDevices.size} devices found"
+                    "Agent running • ${foundDevices.size} device found"
                 )
 
                 while (running) {
@@ -213,14 +244,28 @@ class AgentService : Service() {
                     Thread.sleep(5000)
 
                     if (running) {
-                        registerAgent()
 
-                        sendStatus(
-                            status = "Agent running • ${foundDevices.size} devices found",
-                            progress = 254,
-                            total = 254,
-                            found = foundDevices.size
-                        )
+                        val result =
+                            registerAgent()
+
+                        if (result != 200) {
+
+                            sendStatus(
+                                status = "Agent heartbeat HTTP $result",
+                                progress = 254,
+                                total = 254,
+                                found = foundDevices.size
+                            )
+
+                        } else {
+
+                            sendStatus(
+                                status = "Agent running • ${foundDevices.size} device found",
+                                progress = 254,
+                                total = 254,
+                                found = foundDevices.size
+                            )
+                        }
                     }
                 }
             }
@@ -240,9 +285,9 @@ class AgentService : Service() {
         }
     }
 
-    private fun registerAgent() {
+    private fun registerAgent(): Int {
 
-        try {
+        return try {
 
             val url =
                 "$DASHBOARD_URL/api/agent/register" +
@@ -251,14 +296,21 @@ class AgentService : Service() {
                         "&agentKey=${encode(AGENT_KEY)}" +
                         "&hostname=${encode("Android Agent")}"
 
-            httpGet(url)
+            val result =
+                httpGetWithCode(url)
+
+            result.first
 
         } catch (_: Exception) {
-            // Keep scanning even if registration temporarily fails.
+
+            -1
         }
     }
 
-    private fun reportDevice(ip: String) {
+    private fun reportDevice(
+        ip: String,
+        foundCount: Int
+    ) {
 
         try {
 
@@ -272,30 +324,78 @@ class AgentService : Service() {
                         "&macAddress=${encode("")}" +
                         "&deviceType=${encode("LAN Device")}" +
                         "&vendor=${encode("Unknown")}" +
-                        "&connectionStatus=${encode("ONLINE")}" +
-                        "&accessStatus=${encode("UNKNOWN")}" +
+                        "&connectionStatus=${encode("ACTIVE")}" +
+                        "&accessStatus=${encode("ALLOWED")}" +
                         "&latency=${encode("0")}" +
                         "&hostname=${encode(ip)}"
 
-            httpGet(url)
+            val result =
+                httpGetWithCode(url)
 
-        } catch (_: Exception) {
-            // Ignore individual device reporting failures.
+            val responseCode =
+                result.first
+
+            if (responseCode in 200..299) {
+
+                sendStatus(
+                    status = "Uploaded $ip • HTTP $responseCode",
+                    progress = 254,
+                    total = 254,
+                    found = foundCount
+                )
+
+                updateNotification(
+                    "Uploaded $ip • HTTP $responseCode"
+                )
+
+            } else {
+
+                sendStatus(
+                    status = "Upload $ip failed • HTTP $responseCode",
+                    progress = 254,
+                    total = 254,
+                    found = foundCount
+                )
+
+                updateNotification(
+                    "Upload failed • HTTP $responseCode"
+                )
+            }
+
+        } catch (e: Exception) {
+
+            sendStatus(
+                status = "Upload error $ip: ${e.message ?: "Unknown error"}",
+                progress = 254,
+                total = 254,
+                found = foundCount
+            )
+
+            updateNotification(
+                "Upload error"
+            )
         }
     }
 
-    private fun httpGet(urlString: String): String? {
+    private fun httpGetWithCode(
+        urlString: String
+    ): Pair<Int, String?> {
 
         return try {
 
-            val url = URL(urlString)
+            val url =
+                URL(urlString)
 
             val connection =
-                url.openConnection() as java.net.HttpURLConnection
+                url.openConnection()
+                        as java.net.HttpURLConnection
 
             connection.requestMethod = "GET"
+
             connection.connectTimeout = 10000
+
             connection.readTimeout = 10000
+
             connection.useCaches = false
 
             val responseCode =
@@ -315,14 +415,24 @@ class AgentService : Service() {
 
             connection.disconnect()
 
-            result
+            Pair(
+                responseCode,
+                result
+            )
 
-        } catch (_: Exception) {
-            null
+        } catch (e: Exception) {
+
+            Pair(
+                -1,
+                e.message
+            )
         }
     }
 
-    private fun encode(value: String): String {
+    private fun encode(
+        value: String
+    ): String {
+
         return URLEncoder.encode(
             value,
             "UTF-8"
@@ -373,8 +483,12 @@ class AgentService : Service() {
             this,
             CHANNEL_ID
         )
-            .setContentTitle("NetWatch Agent")
-            .setContentText(text)
+            .setContentTitle(
+                "NetWatch Agent"
+            )
+            .setContentText(
+                text
+            )
             .setSmallIcon(
                 android.R.drawable.ic_dialog_info
             )
@@ -401,7 +515,10 @@ class AgentService : Service() {
 
     private fun createNotificationChannel() {
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        if (
+            Build.VERSION.SDK_INT >=
+            Build.VERSION_CODES.O
+        ) {
 
             val channel =
                 NotificationChannel(
@@ -418,7 +535,9 @@ class AgentService : Service() {
                     NotificationManager::class.java
                 )
 
-            manager.createNotificationChannel(channel)
+            manager.createNotificationChannel(
+                channel
+            )
         }
     }
 
@@ -431,7 +550,10 @@ class AgentService : Service() {
         } catch (_: Exception) {
         }
 
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopForeground(
+            STOP_FOREGROUND_REMOVE
+        )
+
         stopSelf()
     }
 

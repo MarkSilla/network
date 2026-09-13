@@ -5,15 +5,14 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
-import org.json.JSONArray
-import org.json.JSONObject
-import java.net.HttpURLConnection
 import java.net.InetAddress
+import java.net.URL
 import java.net.URLEncoder
-import java.util.UUID
-import kotlin.concurrent.thread
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class AgentService : Service() {
 
@@ -27,31 +26,28 @@ class AgentService : Service() {
         private const val CHANNEL_ID = "netwatch_agent"
         private const val NOTIFICATION_ID = 1001
 
-        @Volatile
-        private var running = false
+        private const val DASHBOARD_URL =
+            "https://network-device-dashboard-tydeft.v2.appdeploy.ai"
+
+        private const val ROUTER_IP = "192.168.100.1"
+
+        private const val AGENT_KEY =
+            "ed30b921-e8b1-4342-867d-6b54b7053e32-01bdbc89-ae0c-48ec-8a1b-2ef86f3b7b6d"
+
+        private const val AGENT_ID = "android-agent"
     }
 
-    private var dashboardUrl = ""
-    private var routerIp = ""
-    private var agentKey = ""
-    private var agentId = ""
-    private var hostname = ""
+    private var running = false
+    private var worker: Thread? = null
 
     override fun onCreate() {
         super.onCreate()
 
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            "NetWatch Agent",
-            NotificationManager.IMPORTANCE_LOW
-        )
-
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(channel)
+        createNotificationChannel()
 
         startForeground(
             NOTIFICATION_ID,
-            createNotification("NetWatch Agent running")
+            createNotification("Starting Android Agent...")
         )
     }
 
@@ -61,31 +57,14 @@ class AgentService : Service() {
         startId: Int
     ): Int {
 
-        dashboardUrl = intent?.getStringExtra("dashboardUrl")
-            ?.trim()
-            ?.trimEnd('/')
-            ?: ""
-
-        routerIp = intent?.getStringExtra("routerIp")
-            ?.trim()
-            ?: ""
-
-        agentKey = intent?.getStringExtra("agentKey")
-            ?.trim()
-            ?: ""
-
-        agentId = intent?.getStringExtra("agentId")
-            ?.trim()
-            ?: "android-${UUID.randomUUID()}"
-
-        hostname = android.os.Build.MODEL ?: "Android Agent"
-
         if (!running) {
             running = true
 
-            thread {
+            worker = Thread {
                 runAgent()
             }
+
+            worker?.start()
         }
 
         return START_STICKY
@@ -93,244 +72,261 @@ class AgentService : Service() {
 
     private fun runAgent() {
 
-        // Register immediately.
-        sendStatus(
-            status = "Connecting to dashboard...",
-            progress = 0,
-            total = 254,
-            found = 0
-        )
-
-        registerAgent()
-
-        while (running) {
-
-            val devices = mutableListOf<DeviceInfo>()
-
+        try {
             sendStatus(
-                status = "Scanning local network...",
+                status = "Connecting to dashboard...",
                 progress = 0,
                 total = 254,
                 found = 0
             )
 
-            // Scan the local /24 network.
-            for (host in 1..254) {
+            updateNotification("Connecting to dashboard...")
 
-                if (!running) break
+            registerAgent()
 
-                val ip = buildIp(routerIp, host)
+            sendStatus(
+                status = "Scanning local area network...",
+                progress = 0,
+                total = 254,
+                found = 0
+            )
 
-                if (ip != null) {
-                    try {
-                        if (isReachable(ip)) {
-                            val device = DeviceInfo(
-                                name = ip,
-                                ipAddress = ip,
-                                macAddress = "",
-                                deviceType = "LAN Device",
-                                vendor = "",
-                                connectionStatus = "ACTIVE",
-                                accessStatus = "ALLOWED",
-                                latency = 0,
-                                hostname = ""
-                            )
+            updateNotification("Scanning local area network...")
 
-                            if (devices.none { it.ipAddress == ip }) {
-                                devices.add(device)
-                            }
-                        }
-                    } catch (_: Exception) {
-                    }
-                }
+            val foundDevices = mutableListOf<String>()
 
-                val progress = host
+            val baseParts = ROUTER_IP.split(".")
 
+            if (baseParts.size != 4) {
                 sendStatus(
-                    status = "Scanning local network...",
-                    progress = progress,
+                    status = "Invalid router IP",
+                    progress = 0,
                     total = 254,
-                    found = devices.size
+                    found = 0
                 )
 
-                // Small delay so the phone is not overloaded.
+                stopAgent()
+                return
+            }
+
+            val subnet =
+                "${baseParts[0]}.${baseParts[1]}.${baseParts[2]}"
+
+            for (i in 1..254) {
+
+                if (!running) {
+                    break
+                }
+
+                val ip = "$subnet.$i"
+
+                try {
+
+                    val address = InetAddress.getByName(ip)
+
+                    val reachable =
+                        address.isReachable(250)
+
+                    if (reachable) {
+
+                        if (!foundDevices.contains(ip)) {
+                            foundDevices.add(ip)
+                        }
+
+                        sendStatus(
+                            status = "Device found: $ip",
+                            progress = i,
+                            total = 254,
+                            found = foundDevices.size
+                        )
+
+                        updateNotification(
+                            "Scanning $i/254 • ${foundDevices.size} found"
+                        )
+
+                    } else {
+
+                        sendStatus(
+                            status = "Scanning $i/254",
+                            progress = i,
+                            total = 254,
+                            found = foundDevices.size
+                        )
+
+                        updateNotification(
+                            "Scanning $i/254 • ${foundDevices.size} found"
+                        )
+                    }
+
+                } catch (_: Exception) {
+
+                    sendStatus(
+                        status = "Scanning $i/254",
+                        progress = i,
+                        total = 254,
+                        found = foundDevices.size
+                    )
+                }
+
                 Thread.sleep(25)
             }
 
+            if (running) {
+
+                sendStatus(
+                    status = "Scan complete. Reporting devices...",
+                    progress = 254,
+                    total = 254,
+                    found = foundDevices.size
+                )
+
+                updateNotification(
+                    "Reporting ${foundDevices.size} devices..."
+                )
+
+                for (ip in foundDevices) {
+
+                    if (!running) {
+                        break
+                    }
+
+                    reportDevice(ip)
+
+                    Thread.sleep(100)
+                }
+
+                registerAgent()
+
+                sendStatus(
+                    status = "Agent running • ${foundDevices.size} devices found",
+                    progress = 254,
+                    total = 254,
+                    found = foundDevices.size
+                )
+
+                updateNotification(
+                    "Agent running • ${foundDevices.size} devices found"
+                )
+
+                while (running) {
+
+                    Thread.sleep(5000)
+
+                    if (running) {
+                        registerAgent()
+
+                        sendStatus(
+                            status = "Agent running • ${foundDevices.size} devices found",
+                            progress = 254,
+                            total = 254,
+                            found = foundDevices.size
+                        )
+                    }
+                }
+            }
+
+        } catch (e: Exception) {
+
             sendStatus(
-                status = "Scan complete",
-                progress = 254,
+                status = "Agent error: ${e.message ?: "Unknown error"}",
+                progress = 0,
                 total = 254,
-                found = devices.size
+                found = 0
             )
 
-            // Report discovered devices.
-            if (running) {
-                reportDevices(devices)
-            }
-
-            // Keep the agent alive / online.
-            if (running) {
-                registerAgent()
-            }
-
-            // Wait before the next scan.
-            for (i in 1..50) {
-                if (!running) break
-                Thread.sleep(100)
-            }
+            updateNotification(
+                "Agent error"
+            )
         }
     }
 
     private fun registerAgent() {
 
         try {
-            val url = buildUrl(
-                "/api/agent/register",
-                mapOf(
-                    "agentId" to agentId,
-                    "routerIp" to routerIp,
-                    "agentKey" to agentKey,
-                    "hostname" to hostname
-                )
-            )
 
-            val result = getRequest(url)
+            val url =
+                "$DASHBOARD_URL/api/agent/register" +
+                        "?agentId=${encode(AGENT_ID)}" +
+                        "&routerIp=${encode(ROUTER_IP)}" +
+                        "&agentKey=${encode(AGENT_KEY)}" +
+                        "&hostname=${encode("Android Agent")}"
 
-            if (result.first in 200..299) {
-                sendStatus(
-                    status = "Agent connected",
-                    progress = 0,
-                    total = 254,
-                    found = 0
-                )
-            }
+            httpGet(url)
 
         } catch (_: Exception) {
-            sendStatus(
-                status = "Dashboard connection error",
-                progress = 0,
-                total = 254,
-                found = 0
-            )
+            // Keep scanning even if registration temporarily fails.
         }
     }
 
-    private fun reportDevices(devices: List<DeviceInfo>) {
-
-        if (devices.isEmpty()) {
-            return
-        }
+    private fun reportDevice(ip: String) {
 
         try {
 
-            /*
-             * Current dashboard has a GET fallback endpoint.
-             * Send one device at a time to keep the URL small.
-             */
-            for (device in devices) {
+            val url =
+                "$DASHBOARD_URL/api/agent/device" +
+                        "?agentId=${encode(AGENT_ID)}" +
+                        "&routerIp=${encode(ROUTER_IP)}" +
+                        "&agentKey=${encode(AGENT_KEY)}" +
+                        "&name=${encode(ip)}" +
+                        "&ipAddress=${encode(ip)}" +
+                        "&macAddress=${encode("")}" +
+                        "&deviceType=${encode("LAN Device")}" +
+                        "&vendor=${encode("Unknown")}" +
+                        "&connectionStatus=${encode("ONLINE")}" +
+                        "&accessStatus=${encode("UNKNOWN")}" +
+                        "&latency=${encode("0")}" +
+                        "&hostname=${encode(ip)}"
 
-                if (!running) break
-
-                val url = buildUrl(
-                    "/api/agent/device",
-                    mapOf(
-                        "agentId" to agentId,
-                        "routerIp" to routerIp,
-                        "agentKey" to agentKey,
-                        "name" to device.name,
-                        "ipAddress" to device.ipAddress,
-                        "macAddress" to device.macAddress,
-                        "deviceType" to device.deviceType,
-                        "vendor" to device.vendor,
-                        "connectionStatus" to device.connectionStatus,
-                        "accessStatus" to device.accessStatus,
-                        "latency" to device.latency.toString(),
-                        "hostname" to device.hostname
-                    )
-                )
-
-                getRequest(url)
-            }
+            httpGet(url)
 
         } catch (_: Exception) {
+            // Ignore individual device reporting failures.
         }
     }
 
-    private fun isReachable(ip: String): Boolean {
+    private fun httpGet(urlString: String): String? {
 
         return try {
-            val address = InetAddress.getByName(ip)
 
-            // Android's isReachable can be unreliable for ICMP,
-            // but this keeps the scan lightweight.
-            address.isReachable(250)
+            val url = URL(urlString)
 
-        } catch (_: Exception) {
-            false
-        }
-    }
-
-    private fun buildIp(router: String, host: Int): String? {
-
-        val parts = router.split(".")
-
-        if (parts.size != 4) {
-            return null
-        }
-
-        return try {
-            "${parts[0]}.${parts[1]}.${parts[2]}.$host"
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    private fun buildUrl(
-        path: String,
-        params: Map<String, String>
-    ): String {
-
-        val base = dashboardUrl.trimEnd('/')
-
-        val query = params.entries.joinToString("&") { entry ->
-            "${URLEncoder.encode(entry.key, "UTF-8")}=" +
-                    URLEncoder.encode(entry.value, "UTF-8")
-        }
-
-        return "$base$path?$query"
-    }
-
-    private fun getRequest(urlString: String): Pair<Int, String> {
-
-        val connection =
-            java.net.URL(urlString).openConnection() as HttpURLConnection
-
-        return try {
+            val connection =
+                url.openConnection() as java.net.HttpURLConnection
 
             connection.requestMethod = "GET"
-            connection.connectTimeout = 8000
-            connection.readTimeout = 8000
-            connection.setRequestProperty("Accept", "application/json")
+            connection.connectTimeout = 10000
+            connection.readTimeout = 10000
+            connection.useCaches = false
 
-            val status = connection.responseCode
+            val responseCode =
+                connection.responseCode
 
             val stream =
-                if (status in 200..299) {
+                if (responseCode in 200..299) {
                     connection.inputStream
                 } else {
                     connection.errorStream
                 }
 
-            val body = stream?.bufferedReader()?.use {
-                it.readText()
-            } ?: ""
+            val result =
+                stream?.bufferedReader()?.use {
+                    it.readText()
+                }
 
-            Pair(status, body)
-
-        } finally {
             connection.disconnect()
+
+            result
+
+        } catch (_: Exception) {
+            null
         }
+    }
+
+    private fun encode(value: String): String {
+        return URLEncoder.encode(
+            value,
+            "UTF-8"
+        )
     }
 
     private fun sendStatus(
@@ -340,36 +336,62 @@ class AgentService : Service() {
         found: Int
     ) {
 
-        val intent = Intent(ACTION_STATUS)
+        val intent =
+            Intent(ACTION_STATUS).apply {
 
-        intent.setPackage(packageName)
+                setPackage(packageName)
 
-        intent.putExtra(EXTRA_STATUS, status)
-        intent.putExtra(EXTRA_PROGRESS, progress)
-        intent.putExtra(EXTRA_TOTAL, total)
-        intent.putExtra(EXTRA_FOUND, found)
+                putExtra(
+                    EXTRA_STATUS,
+                    status
+                )
+
+                putExtra(
+                    EXTRA_PROGRESS,
+                    progress
+                )
+
+                putExtra(
+                    EXTRA_TOTAL,
+                    total
+                )
+
+                putExtra(
+                    EXTRA_FOUND,
+                    found
+                )
+            }
 
         sendBroadcast(intent)
-
-        updateNotification(
-            "$status $progress/$total • Found: $found"
-        )
     }
 
-    private fun createNotification(text: String): Notification {
+    private fun createNotification(
+        text: String
+    ): Notification {
 
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        return NotificationCompat.Builder(
+            this,
+            CHANNEL_ID
+        )
             .setContentTitle("NetWatch Agent")
             .setContentText(text)
-            .setSmallIcon(android.R.drawable.stat_sys_data_wifi)
-            .setOngoing(true)
+            .setSmallIcon(
+                android.R.drawable.ic_dialog_info
+            )
+            .setPriority(
+                NotificationCompat.PRIORITY_LOW
+            )
             .build()
     }
 
-    private fun updateNotification(text: String) {
+    private fun updateNotification(
+        text: String
+    ) {
 
         val manager =
-            getSystemService(NotificationManager::class.java)
+            getSystemService(
+                NotificationManager::class.java
+            )
 
         manager.notify(
             NOTIFICATION_ID,
@@ -377,24 +399,59 @@ class AgentService : Service() {
         )
     }
 
-    override fun onDestroy() {
+    private fun createNotificationChannel() {
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+
+            val channel =
+                NotificationChannel(
+                    CHANNEL_ID,
+                    "NetWatch Agent",
+                    NotificationManager.IMPORTANCE_LOW
+                )
+
+            channel.description =
+                "NetWatch Android network scanning agent"
+
+            val manager =
+                getSystemService(
+                    NotificationManager::class.java
+                )
+
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun stopAgent() {
+
         running = false
+
+        try {
+            worker?.interrupt()
+        } catch (_: Exception) {
+        }
+
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    override fun onDestroy() {
+
+        running = false
+
+        try {
+            worker?.interrupt()
+        } catch (_: Exception) {
+        }
+
+        worker = null
+
         super.onDestroy()
     }
 
-    override fun onBind(intent: Intent?): IBinder? {
+    override fun onBind(
+        intent: Intent?
+    ): IBinder? {
         return null
     }
-
-    data class DeviceInfo(
-        val name: String,
-        val ipAddress: String,
-        val macAddress: String,
-        val deviceType: String,
-        val vendor: String,
-        val connectionStatus: String,
-        val accessStatus: String,
-        val latency: Int,
-        val hostname: String
-    )
 }

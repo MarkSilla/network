@@ -402,33 +402,44 @@ class MainActivity : ComponentActivity() {
             "🟡 PAIRING..."
 
         progressText.text =
-            "Waiting for dashboard connection..."
+            "Checking Agent Key with dashboard..."
 
         thread {
 
             try {
 
-                val router =
-                    routerInput.text
-                        .toString()
-                        .trim()
-
                 /*
-                 * First register this Android agent
-                 * using the supplied Agent Key.
+                 * IMPORTANT:
+                 *
+                 * Initial pairing only uses
+                 * the Agent Key.
+                 *
+                 * Router IP is NOT required yet.
                  */
 
                 val registerUrl =
                     "$DASHBOARD_URL/api/agent/register" +
                             "?agentId=${encode(getAgentId())}" +
-                            "&routerIp=${encode(router)}" +
+                            "&routerIp=${encode("")}" +
                             "&agentKey=${encode(key)}" +
                             "&hostname=${encode(android.os.Build.MODEL)}"
 
                 val registerResult =
                     getRequest(registerUrl)
 
-                if (registerResult.first !in 200..299) {
+                /*
+                 * The dashboard must explicitly
+                 * return an OK response.
+                 */
+
+                val registerAccepted =
+                    registerResult.first in 200..299 &&
+                            registerResult.second.contains(
+                                "\"ok\"",
+                                ignoreCase = true
+                            )
+
+                if (!registerAccepted) {
 
                     runOnUiThread {
 
@@ -436,7 +447,14 @@ class MainActivity : ComponentActivity() {
                             "🔴 NOT PAIRED"
 
                         progressText.text =
-                            "Dashboard rejected pairing (${registerResult.first})"
+                            if (registerResult.first == 403) {
+
+                                "Invalid Agent Key. Copy the current key from the dashboard."
+
+                            } else {
+
+                                "Dashboard rejected pairing (${registerResult.first})"
+                            }
 
                         pairButton.isEnabled =
                             true
@@ -449,10 +467,8 @@ class MainActivity : ComponentActivity() {
                 }
 
                 /*
-                 * Registration succeeded.
-                 *
-                 * Now verify that the dashboard
-                 * recognizes this Agent Key.
+                 * Now ask the dashboard for the
+                 * actual pairing state.
                  */
 
                 val statusUrl =
@@ -462,15 +478,32 @@ class MainActivity : ComponentActivity() {
                 val statusResult =
                     getRequest(statusUrl)
 
-                if (statusResult.first !in 200..299) {
+                /*
+                 * Do NOT consider HTTP 200 alone
+                 * as proof of pairing.
+                 *
+                 * The response must contain:
+                 *
+                 * "paired": true
+                 */
+
+                val dashboardPaired =
+                    statusResult.first in 200..299 &&
+                            "\"paired\"\\s*:\\s*true"
+                                .toRegex()
+                                .containsMatchIn(
+                                    statusResult.second
+                                )
+
+                if (!dashboardPaired) {
 
                     runOnUiThread {
 
                         statusText.text =
-                            "🟡 WAITING FOR CONNECTION"
+                            "🔴 NOT PAIRED"
 
                         progressText.text =
-                            "Waiting for dashboard pairing..."
+                            "Dashboard did not confirm this Agent Key."
 
                         pairButton.isEnabled =
                             true
@@ -483,7 +516,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 /*
-                 * Dashboard accepted the Agent Key.
+                 * REAL PAIRING CONFIRMED
                  */
 
                 runOnUiThread {
@@ -495,7 +528,12 @@ class MainActivity : ComponentActivity() {
                         "🟢 PAIRED / CONNECTED"
 
                     progressText.text =
-                        "Agent Key matched. Ready to scan."
+                        "Agent Key matched. Enter Router IP to scan."
+
+                    /*
+                     * Router IP appears only
+                     * after successful pairing.
+                     */
 
                     routerInput.visibility =
                         View.VISIBLE
@@ -538,6 +576,24 @@ class MainActivity : ComponentActivity() {
             return
         }
 
+        val router =
+            routerInput.text
+                .toString()
+                .trim()
+
+        /*
+         * Router IP is required
+         * before scanning.
+         */
+
+        if (router.isBlank()) {
+
+            progressText.text =
+                "Enter the Router IP first"
+
+            return
+        }
+
         val intent =
             Intent(
                 this,
@@ -551,9 +607,7 @@ class MainActivity : ComponentActivity() {
 
                 putExtra(
                     "routerIp",
-                    routerInput.text
-                        .toString()
-                        .trim()
+                    router
                 )
 
                 putExtra(
@@ -725,9 +779,11 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
 
         try {
+
             unregisterReceiver(
                 statusReceiver
             )
+
         } catch (_: Exception) {
         }
 

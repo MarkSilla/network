@@ -2,29 +2,19 @@ package com.netwatch.agent
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Bundle
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Text
-import androidx.compose.material3.Surface
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.remember
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -36,11 +26,13 @@ import java.util.UUID
 
 class MainActivity : ComponentActivity() {
 
-    private var dashboardUrl by mutableStateOf("")
-    private var routerIp by mutableStateOf("")
-    private var agentKey by mutableStateOf("")
-    private var status by mutableStateOf("Disconnected")
-    private var isTesting by mutableStateOf(false)
+    private lateinit var dashboardUrlInput: EditText
+    private lateinit var routerIpInput: EditText
+    private lateinit var agentKeyInput: EditText
+    private lateinit var statusText: TextView
+    private lateinit var testButton: Button
+
+    private var isTesting = false
 
     private val prefs by lazy {
         getSharedPreferences("netwatch_agent", Context.MODE_PRIVATE)
@@ -49,184 +41,336 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        dashboardUrl = prefs.getString("dashboard_url", "") ?: ""
-        routerIp = prefs.getString("router_ip", "") ?: ""
-        agentKey = prefs.getString("agent_key", "") ?: ""
-
         if (prefs.getString("agent_id", null) == null) {
             prefs.edit()
                 .putString("agent_id", UUID.randomUUID().toString())
                 .apply()
         }
 
-        setContent {
-            MaterialTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(20.dp),
-                        verticalArrangement = Arrangement.Center
-                    ) {
+        buildUI()
+    }
 
-                        Text(
-                            text = "NetWatch Android Agent",
-                            style = MaterialTheme.typography.headlineMedium
-                        )
+    private fun buildUI() {
 
-                        Spacer(modifier = Modifier.height(20.dp))
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.rgb(8, 18, 32))
+            setPadding(dp(20), dp(20), dp(20), dp(20))
+        }
 
-                        OutlinedTextField(
-                            value = dashboardUrl,
-                            onValueChange = {
-                                dashboardUrl = it
-                            },
-                            label = {
-                                Text("Dashboard URL")
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true
-                        )
+        val scrollView = ScrollView(this)
 
-                        Spacer(modifier = Modifier.height(12.dp))
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
 
-                        OutlinedTextField(
-                            value = routerIp,
-                            onValueChange = {
-                                routerIp = it
-                            },
-                            label = {
-                                Text("Router IP")
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true
-                        )
+        val title = TextView(this).apply {
+            text = "NetWatch"
+            textSize = 30f
+            setTextColor(Color.WHITE)
+            setTypeface(null, Typeface.BOLD)
+        }
 
-                        Spacer(modifier = Modifier.height(12.dp))
+        content.addView(
+            title,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
 
-                        OutlinedTextField(
-                            value = agentKey,
-                            onValueChange = {
-                                agentKey = it
-                            },
-                            label = {
-                                Text("Agent Key")
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true
-                        )
+        val subtitle = TextView(this).apply {
+            text = "Android Network Agent"
+            textSize = 15f
+            setTextColor(Color.rgb(100, 220, 160))
+            setPadding(0, dp(4), 0, dp(20))
+        }
 
-                        Spacer(modifier = Modifier.height(16.dp))
+        content.addView(subtitle)
 
-                        Card(
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(16.dp)
-                            ) {
-                                Text(
-                                    text = "Status",
-                                    style = MaterialTheme.typography.titleMedium
-                                )
+        dashboardUrlInput = createInput(
+            "Dashboard URL",
+            prefs.getString("dashboard_url", "")
+                ?: ""
+        )
 
-                                Spacer(modifier = Modifier.height(6.dp))
+        content.addView(dashboardUrlInput)
 
-                                Text(status)
-                            }
-                        }
+        routerIpInput = createInput(
+            "Router IP",
+            prefs.getString("router_ip", "")
+                ?: ""
+        )
 
-                        Spacer(modifier = Modifier.height(16.dp))
+        content.addView(routerIpInput)
 
-                        Button(
-                            onClick = {
-                                testConnection()
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = !isTesting
-                        ) {
-                            Text(
-                                if (isTesting)
-                                    "Testing..."
-                                else
-                                    "Test Dashboard Connection"
-                            )
-                        }
+        agentKeyInput = createInput(
+            "Agent Key",
+            prefs.getString("agent_key", "")
+                ?: ""
+        )
 
-                        Spacer(modifier = Modifier.height(10.dp))
+        content.addView(agentKeyInput)
 
-                        Button(
-                            onClick = {
-                                startAgent()
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Start Agent")
-                        }
+        val statusCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(
+                dp(16),
+                dp(16),
+                dp(16),
+                dp(16)
+            )
+            setBackgroundColor(Color.rgb(20, 34, 50))
+        }
 
-                        Spacer(modifier = Modifier.height(10.dp))
+        val statusLabel = TextView(this).apply {
+            text = "CONNECTION STATUS"
+            textSize = 12f
+            setTextColor(Color.rgb(140, 160, 180))
+            setTypeface(null, Typeface.BOLD)
+        }
 
-                        Button(
-                            onClick = {
-                                stopAgent()
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Stop Agent")
-                        }
-                    }
-                }
-            }
+        statusCard.addView(statusLabel)
+
+        statusText = TextView(this).apply {
+            text = "Disconnected"
+            textSize = 16f
+            setTextColor(Color.rgb(255, 180, 80))
+            setTypeface(null, Typeface.BOLD)
+            setPadding(0, dp(8), 0, 0)
+        }
+
+        statusCard.addView(statusText)
+
+        val cardParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+
+        cardParams.setMargins(
+            0,
+            dp(20),
+            0,
+            dp(16)
+        )
+
+        content.addView(statusCard, cardParams)
+
+        testButton = createButton(
+            "TEST DASHBOARD CONNECTION"
+        )
+
+        testButton.setOnClickListener {
+            testConnection()
+        }
+
+        content.addView(testButton)
+
+        val startButton = createButton(
+            "START AGENT"
+        )
+
+        startButton.setOnClickListener {
+            startAgent()
+        }
+
+        content.addView(startButton)
+
+        val stopButton = createButton(
+            "STOP AGENT"
+        )
+
+        stopButton.setOnClickListener {
+            stopAgent()
+        }
+
+        content.addView(stopButton)
+
+        val info = TextView(this).apply {
+            text =
+                "Keep this phone connected to the same Wi-Fi network as the devices you want NetWatch to discover."
+            textSize = 13f
+            setTextColor(Color.rgb(150, 165, 180))
+            setPadding(
+                0,
+                dp(20),
+                0,
+                dp(10)
+            )
+        }
+
+        content.addView(info)
+
+        scrollView.addView(content)
+
+        root.addView(
+            scrollView,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+        )
+
+        setContentView(root)
+    }
+
+    private fun createInput(
+        hint: String,
+        value: String
+    ): EditText {
+
+        return EditText(this).apply {
+
+            setText(value)
+
+            this.hint = hint
+
+            textSize = 15f
+
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.rgb(120, 140, 160))
+
+            setSingleLine(true)
+
+            setPadding(
+                dp(14),
+                dp(12),
+                dp(14),
+                dp(12)
+            )
+
+            setBackgroundColor(
+                Color.rgb(25, 42, 60)
+            )
+
+            val params = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(55)
+            )
+
+            params.setMargins(
+                0,
+                0,
+                0,
+                dp(12)
+            )
+
+            layoutParams = params
         }
     }
 
-    private fun saveSettings() {
-        prefs.edit()
-            .putString("dashboard_url", dashboardUrl.trim())
-            .putString("router_ip", routerIp.trim())
-            .putString("agent_key", agentKey.trim())
-            .apply()
+    private fun createButton(
+        textValue: String
+    ): Button {
+
+        return Button(this).apply {
+
+            text = textValue
+
+            textSize = 13f
+
+            setTextColor(Color.WHITE)
+
+            setTypeface(null, Typeface.BOLD)
+
+            setBackgroundColor(
+                Color.rgb(22, 150, 95)
+            )
+
+            isAllCaps = false
+
+            val params = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(52)
+            )
+
+            params.setMargins(
+                0,
+                0,
+                0,
+                dp(10)
+            )
+
+            layoutParams = params
+        }
     }
 
     private fun testConnection() {
 
-        val cleanUrl = dashboardUrl.trim().removeSuffix("/")
-        val cleanRouterIp = routerIp.trim()
-        val cleanAgentKey = agentKey.trim()
+        val dashboardUrl =
+            dashboardUrlInput.text.toString()
+                .trim()
+                .removeSuffix("/")
 
-        if (cleanUrl.isEmpty()) {
-            status = "ERROR: Dashboard URL is empty"
+        val routerIp =
+            routerIpInput.text.toString()
+                .trim()
+
+        val agentKey =
+            agentKeyInput.text.toString()
+                .trim()
+
+        if (dashboardUrl.isEmpty()) {
+            showStatus(
+                "ERROR • Dashboard URL is empty",
+                false
+            )
             return
         }
 
-        if (cleanRouterIp.isEmpty()) {
-            status = "ERROR: Router IP is empty"
+        if (routerIp.isEmpty()) {
+            showStatus(
+                "ERROR • Router IP is empty",
+                false
+            )
             return
         }
 
-        if (cleanAgentKey.isEmpty()) {
-            status = "ERROR: Agent Key is empty"
+        if (agentKey.isEmpty()) {
+            showStatus(
+                "ERROR • Agent Key is empty",
+                false
+            )
             return
         }
 
-        saveSettings()
+        saveSettings(
+            dashboardUrl,
+            routerIp,
+            agentKey
+        )
+
+        if (isTesting) return
 
         isTesting = true
-        status = "Connecting..."
+        testButton.isEnabled = false
+
+        showStatus(
+            "CONNECTING...",
+            null
+        )
 
         lifecycleScope.launch {
 
             val result = withContext(Dispatchers.IO) {
                 registerAgent(
-                    cleanUrl,
-                    cleanRouterIp,
-                    cleanAgentKey
+                    dashboardUrl,
+                    routerIp,
+                    agentKey
                 )
             }
 
             isTesting = false
-            status = result
+            testButton.isEnabled = true
+
+            val success =
+                result.startsWith("CONNECTED")
+
+            showStatus(
+                result,
+                success
+            )
 
             Toast.makeText(
                 this@MainActivity,
@@ -246,22 +390,33 @@ class MainActivity : ComponentActivity() {
 
         return try {
 
-            val agentId = prefs.getString(
-                "agent_id",
-                UUID.randomUUID().toString()
-            ) ?: UUID.randomUUID().toString()
+            val agentId =
+                prefs.getString(
+                    "agent_id",
+                    null
+                ) ?: UUID.randomUUID().toString()
 
             prefs.edit()
-                .putString("agent_id", agentId)
+                .putString(
+                    "agent_id",
+                    agentId
+                )
                 .apply()
 
-            val url = URL("$baseUrl/api/agent/register")
+            val url = URL(
+                "$baseUrl/api/agent/register"
+            )
 
-            connection = url.openConnection() as HttpURLConnection
+            connection =
+                url.openConnection()
+                        as HttpURLConnection
 
             connection.requestMethod = "POST"
+
             connection.connectTimeout = 10000
+
             connection.readTimeout = 10000
+
             connection.doOutput = true
 
             connection.setRequestProperty(
@@ -274,34 +429,64 @@ class MainActivity : ComponentActivity() {
                 "application/json"
             )
 
-            val body = JSONObject().apply {
-                put("agentId", agentId)
-                put("routerIp", routerIp)
-                put("agentKey", key)
-                put("hostname", android.os.Build.MODEL)
-            }.toString()
+            val body =
+                JSONObject().apply {
+
+                    put(
+                        "agentId",
+                        agentId
+                    )
+
+                    put(
+                        "routerIp",
+                        routerIp
+                    )
+
+                    put(
+                        "agentKey",
+                        key
+                    )
+
+                    put(
+                        "hostname",
+                        android.os.Build.MODEL
+                    )
+                }.toString()
 
             connection.outputStream.use { output ->
-                output.write(body.toByteArray(Charsets.UTF_8))
+
+                output.write(
+                    body.toByteArray(
+                        Charsets.UTF_8
+                    )
+                )
+
+                output.flush()
             }
 
-            val responseCode = connection.responseCode
+            val responseCode =
+                connection.responseCode
 
-            val responseBody = try {
+            val responseBody =
+                try {
 
-                val stream =
-                    if (responseCode >= 400)
-                        connection.errorStream
-                    else
-                        connection.inputStream
+                    val stream =
+                        if (responseCode >= 400) {
+                            connection.errorStream
+                        } else {
+                            connection.inputStream
+                        }
 
-                stream?.bufferedReader()?.use {
-                    it.readText()
-                } ?: ""
+                    stream
+                        ?.bufferedReader()
+                        ?.use {
+                            it.readText()
+                        }
+                        ?: ""
 
-            } catch (e: Exception) {
-                ""
-            }
+                } catch (_: Exception) {
+                    ""
+                }
 
             if (responseCode in 200..299) {
 
@@ -310,33 +495,25 @@ class MainActivity : ComponentActivity() {
             } else {
 
                 val serverMessage =
-                    try {
-                        val json = JSONObject(responseBody)
-
-                        json.optString(
-                            "error",
-                            json.optString(
-                                "message",
-                                responseBody
-                            )
-                        )
-
-                    } catch (_: Exception) {
+                    parseServerMessage(
                         responseBody
-                    }
+                    )
 
-                when {
+                when (responseCode) {
 
-                    responseCode == 401 ->
+                    401 ->
                         "ERROR 401 • Unauthorized\n$serverMessage"
 
-                    responseCode == 403 ->
+                    403 ->
                         "ERROR 403 • Server rejected request\n$serverMessage"
 
-                    responseCode == 404 ->
+                    404 ->
                         "ERROR 404 • Register endpoint not found\n$serverMessage"
 
-                    responseCode >= 500 ->
+                    408 ->
+                        "ERROR 408 • Request timeout\n$serverMessage"
+
+                    in 500..599 ->
                         "ERROR $responseCode • Server error\n$serverMessage"
 
                     else ->
@@ -348,6 +525,10 @@ class MainActivity : ComponentActivity() {
 
             "ERROR • Cannot find dashboard server"
 
+        } catch (e: java.net.ConnectException) {
+
+            "ERROR • Cannot connect to dashboard"
+
         } catch (e: java.net.SocketTimeoutException) {
 
             "ERROR • Connection timeout"
@@ -357,58 +538,174 @@ class MainActivity : ComponentActivity() {
             "ERROR • ${e.javaClass.simpleName}: ${e.message}"
 
         } finally {
+
             connection?.disconnect()
         }
     }
 
+    private fun parseServerMessage(
+        responseBody: String
+    ): String {
+
+        if (responseBody.isBlank()) {
+            return "No response body from server"
+        }
+
+        return try {
+
+            val json =
+                JSONObject(responseBody)
+
+            json.optString(
+                "error",
+                json.optString(
+                    "message",
+                    responseBody
+                )
+            )
+
+        } catch (_: Exception) {
+
+            responseBody.take(500)
+        }
+    }
+
+    private fun saveSettings(
+        dashboardUrl: String,
+        routerIp: String,
+        agentKey: String
+    ) {
+
+        prefs.edit()
+            .putString(
+                "dashboard_url",
+                dashboardUrl
+            )
+            .putString(
+                "router_ip",
+                routerIp
+            )
+            .putString(
+                "agent_key",
+                agentKey
+            )
+            .apply()
+    }
+
     private fun startAgent() {
 
-        saveSettings()
+        saveSettings(
+            dashboardUrlInput.text.toString()
+                .trim()
+                .removeSuffix("/"),
 
-        val intent = Intent(
-            this,
-            AgentService::class.java
+            routerIpInput.text.toString()
+                .trim(),
+
+            agentKeyInput.text.toString()
+                .trim()
         )
 
-        startForegroundService(intent)
+        try {
 
-        status = "Agent starting..."
+            val intent =
+                Intent(
+                    this,
+                    AgentService::class.java
+                )
 
-        Toast.makeText(
-            this,
-            "Android Agent started",
-            Toast.LENGTH_SHORT
-        ).show()
+            startForegroundService(intent)
+
+            showStatus(
+                "AGENT STARTING...",
+                null
+            )
+
+            Toast.makeText(
+                this,
+                "Android Agent started",
+                Toast.LENGTH_SHORT
+            ).show()
+
+        } catch (e: Exception) {
+
+            showStatus(
+                "ERROR • ${e.message}",
+                false
+            )
+        }
     }
 
     private fun stopAgent() {
 
-        val intent = Intent(
-            this,
-            AgentService::class.java
+        try {
+
+            val intent =
+                Intent(
+                    this,
+                    AgentService::class.java
+                )
+
+            stopService(intent)
+
+            showStatus(
+                "DISCONNECTED",
+                false
+            )
+
+            Toast.makeText(
+                this,
+                "Android Agent stopped",
+                Toast.LENGTH_SHORT
+            ).show()
+
+        } catch (e: Exception) {
+
+            showStatus(
+                "ERROR • ${e.message}",
+                false
+            )
+        }
+    }
+
+    private fun showStatus(
+        message: String,
+        success: Boolean?
+    ) {
+
+        statusText.text = message
+
+        statusText.setTextColor(
+            when (success) {
+                true ->
+                    Color.rgb(
+                        80,
+                        220,
+                        140
+                    )
+
+                false ->
+                    Color.rgb(
+                        255,
+                        100,
+                        100
+                    )
+
+                null ->
+                    Color.rgb(
+                        255,
+                        190,
+                        80
+                    )
+            }
         )
+    }
 
-        stopService(intent)
+    private fun dp(value: Int): Int {
 
-        status = "Disconnected"
-
-        Toast.makeText(
-            this,
-            "Android Agent stopped",
-            Toast.LENGTH_SHORT
-        ).show()
+        return (
+            value *
+                resources.displayMetrics.density
+            ).toInt()
     }
 }
-
-Important: kailangan ng project mo ang "lifecycle-runtime-ktx" dahil gumagamit ito ng "lifecycleScope". Kung meron na iyon sa "build.gradle.kts", okay na.
-
-Sa GitHub phone mo:
-
-"app → src → main → java → com → netwatch → agent → MainActivity.kt"
-
-→ Edit
-→ "Ctrl+A" / select all
-→ paste itong code
-→ Commit changes.
-
-Pag na-paste mo na, sabihin mo “next” at tutulungan kitang i-build yung bagong APK.

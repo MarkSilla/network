@@ -1,292 +1,466 @@
 package com.netwatch.agent
 
+import android.content.BroadcastReceiver
 import android.content.Context
-import android.graphics.Color
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Bundle
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.activity.ComponentActivity
-import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import androidx.core.content.ContextCompat
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 import java.util.UUID
+import kotlin.concurrent.thread
 
 class MainActivity : ComponentActivity() {
 
-    private lateinit var dashboardUrlInput: EditText
-    private lateinit var routerIpInput: EditText
-    private lateinit var agentKeyInput: EditText
     private lateinit var statusText: TextView
+    private lateinit var progressText: TextView
+    private lateinit var devicesText: TextView
+    private lateinit var progressBar: ProgressBar
 
-    private val prefs by lazy {
-        getSharedPreferences("netwatch", Context.MODE_PRIVATE)
+    private lateinit var dashboardInput: EditText
+    private lateinit var routerInput: EditText
+    private lateinit var keyInput: EditText
+
+    private val statusReceiver = object : BroadcastReceiver() {
+
+        override fun onReceive(
+            context: Context?,
+            intent: Intent?
+        ) {
+
+            if (intent?.action != AgentService.ACTION_STATUS) {
+                return
+            }
+
+            val status =
+                intent.getStringExtra(AgentService.EXTRA_STATUS)
+                    ?: "Agent Running"
+
+            val progress =
+                intent.getIntExtra(
+                    AgentService.EXTRA_PROGRESS,
+                    0
+                )
+
+            val total =
+                intent.getIntExtra(
+                    AgentService.EXTRA_TOTAL,
+                    254
+                )
+
+            val found =
+                intent.getIntExtra(
+                    AgentService.EXTRA_FOUND,
+                    0
+                )
+
+            runOnUiThread {
+
+                statusText.text = status
+
+                progressText.text =
+                    if (status.contains("Scanning")) {
+                        "Scanning $progress/$total"
+                    } else {
+                        status
+                    }
+
+                devicesText.text =
+                    "Devices found: $found"
+
+                progressBar.max = total
+                progressBar.progress = progress
+            }
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val root = LinearLayout(this)
-        root.orientation = LinearLayout.VERTICAL
-        root.setPadding(40, 40, 40, 40)
-        root.setBackgroundColor(Color.rgb(10, 18, 32))
+        val layout = LinearLayout(this)
 
-        val title = TextView(this)
-        title.text = "NetWatch"
-        title.textSize = 30f
-        title.setTextColor(Color.WHITE)
+        layout.orientation = LinearLayout.VERTICAL
+        layout.setPadding(40, 40, 40, 40)
 
-        val subtitle = TextView(this)
-        subtitle.text = "Android Network Agent"
-        subtitle.textSize = 16f
-        subtitle.setTextColor(Color.LTGRAY)
+        layout.setBackgroundColor(
+            android.graphics.Color.rgb(10, 15, 25)
+        )
 
-        dashboardUrlInput = createInput(
-            "Dashboard URL",
-            prefs.getString(
-                "dashboard_url",
+        dashboardInput =
+            createInput(
+                "Dashboard URL",
                 "https://network-device-dashboard-tydeft.v2.appdeploy.ai"
-            ) ?: ""
-        )
+            )
 
-        routerIpInput = createInput(
-            "Router IP",
-            prefs.getString("router_ip", "192.168.100.1") ?: ""
-        )
+        routerInput =
+            createInput(
+                "Router IP",
+                "192.168.100.1"
+            )
 
-        agentKeyInput = createInput(
-            "Agent Key",
-            prefs.getString("agent_key", "") ?: ""
-        )
+        keyInput =
+            createInput(
+                "Agent Key",
+                ""
+            )
+
+        layout.addView(dashboardInput)
+        layout.addView(routerInput)
+        layout.addView(keyInput)
 
         statusText = TextView(this)
-        statusText.text = "Status: Not connected"
-        statusText.textSize = 16f
-        statusText.setTextColor(Color.WHITE)
-        statusText.setPadding(0, 30, 0, 30)
 
-        val testButton = Button(this)
-        testButton.text = "TEST DASHBOARD CONNECTION"
+        statusText.text =
+            "Dashboard connection not tested"
 
-        val startButton = Button(this)
-        startButton.text = "START AGENT"
+        statusText.textSize = 17f
+        statusText.setTextColor(
+            android.graphics.Color.WHITE
+        )
 
-        val stopButton = Button(this)
-        stopButton.text = "STOP AGENT"
+        statusText.setPadding(0, 30, 0, 15)
 
-        root.addView(title)
-        root.addView(subtitle)
-        root.addView(dashboardUrlInput)
-        root.addView(routerIpInput)
-        root.addView(agentKeyInput)
-        root.addView(statusText)
-        root.addView(testButton)
-        root.addView(startButton)
-        root.addView(stopButton)
+        layout.addView(statusText)
 
-        setContentView(root)
+        progressText = TextView(this)
+
+        progressText.text =
+            "Ready"
+
+        progressText.textSize = 16f
+
+        progressText.setTextColor(
+            android.graphics.Color.LTGRAY
+        )
+
+        layout.addView(progressText)
+
+        progressBar =
+            ProgressBar(
+                this,
+                null,
+                android.R.attr.progressBarStyleHorizontal
+            )
+
+        progressBar.max = 254
+        progressBar.progress = 0
+
+        layout.addView(progressBar)
+
+        devicesText = TextView(this)
+
+        devicesText.text =
+            "Devices found: 0"
+
+        devicesText.textSize = 15f
+
+        devicesText.setTextColor(
+            android.graphics.Color.LTGRAY
+        )
+
+        devicesText.setPadding(0, 12, 0, 20)
+
+        layout.addView(devicesText)
+
+        val testButton =
+            Button(this)
+
+        testButton.text =
+            "TEST DASHBOARD CONNECTION"
 
         testButton.setOnClickListener {
-            testConnection()
+            testDashboardConnection()
         }
+
+        layout.addView(testButton)
+
+        val startButton =
+            Button(this)
+
+        startButton.text =
+            "START AGENT"
 
         startButton.setOnClickListener {
             startAgent()
         }
 
+        layout.addView(startButton)
+
+        val stopButton =
+            Button(this)
+
+        stopButton.text =
+            "STOP AGENT"
+
         stopButton.setOnClickListener {
             stopAgent()
         }
+
+        layout.addView(stopButton)
+
+        setContentView(layout)
+
+        ContextCompat.registerReceiver(
+            this,
+            statusReceiver,
+            IntentFilter(AgentService.ACTION_STATUS),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
     }
 
     private fun createInput(
         hint: String,
         value: String
     ): EditText {
+
         val input = EditText(this)
 
         input.hint = hint
         input.setText(value)
-        input.setTextColor(Color.WHITE)
-        input.setHintTextColor(Color.GRAY)
 
-        input.setPadding(0, 20, 0, 20)
+        input.setTextColor(
+            android.graphics.Color.WHITE
+        )
+
+        input.setHintTextColor(
+            android.graphics.Color.GRAY
+        )
+
+        input.setPadding(20, 15, 20, 15)
 
         return input
     }
 
-    private fun saveSettings() {
-        prefs.edit()
-            .putString("dashboard_url", dashboardUrlInput.text.toString().trim())
-            .putString("router_ip", routerIpInput.text.toString().trim())
-            .putString("agent_key", agentKeyInput.text.toString().trim())
-            .apply()
-    }
+    private fun testDashboardConnection() {
 
-    private fun testConnection() {
-        saveSettings()
+        statusText.text =
+            "Testing dashboard connection..."
 
-        val dashboardUrl = dashboardUrlInput.text.toString().trim()
-        val routerIp = routerIpInput.text.toString().trim()
-        val agentKey = agentKeyInput.text.toString().trim()
+        thread {
 
-        if (dashboardUrl.isEmpty() ||
-            routerIp.isEmpty() ||
-            agentKey.isEmpty()
-        ) {
-            statusText.text = "Status: Please complete all fields."
-            return
-        }
+            try {
 
-        statusText.text = "Status: Connecting..."
+                val dashboard =
+                    dashboardInput.text
+                        .toString()
+                        .trim()
+                        .trimEnd('/')
 
-        lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                registerAgent(
-                    dashboardUrl,
-                    routerIp,
-                    agentKey
-                )
-            }
+                val router =
+                    routerInput.text
+                        .toString()
+                        .trim()
 
-            statusText.text = result
-        }
-    }
+                val key =
+                    keyInput.text
+                        .toString()
+                        .trim()
 
-    private fun registerAgent(
-        dashboardUrl: String,
-        routerIp: String,
-        agentKey: String
-    ): String {
+                val agentId = getAgentId()
 
-        return try {
-            val agentId = getAgentId()
+                val url =
+                    "$dashboard/api/agent/register" +
+                            "?agentId=${encode(agentId)}" +
+                            "&routerIp=${encode(router)}" +
+                            "&agentKey=${encode(key)}" +
+                            "&hostname=${encode(android.os.Build.MODEL)}"
 
-            val baseUrl = dashboardUrl.trimEnd('/')
+                val result =
+                    getRequest(url)
 
-            /*
-             * AppDeploy's CDN currently rejects POST requests from
-             * native clients. The Android agent therefore uses the
-             * GET registration fallback.
-             */
-            val urlString =
-                "$baseUrl/api/agent/register" +
-                        "?agentId=${encode(agentId)}" +
-                        "&routerIp=${encode(routerIp)}" +
-                        "&agentKey=${encode(agentKey)}" +
-                        "&hostname=${encode(android.os.Build.MODEL)}"
+                runOnUiThread {
 
-            val connection =
-                URL(urlString).openConnection() as HttpURLConnection
+                    if (result.first in 200..299) {
 
-            connection.requestMethod = "GET"
-            connection.connectTimeout = 10000
-            connection.readTimeout = 10000
+                        statusText.text =
+                            "CONNECTED"
 
-            val responseCode = connection.responseCode
+                        progressText.text =
+                            "Dashboard connection successful"
 
-            val responseText =
-                try {
-                    connection.inputStream.bufferedReader().use {
-                        it.readText()
+                    } else {
+
+                        statusText.text =
+                            "CONNECTION FAILED (${result.first})"
+
+                        progressText.text =
+                            result.second
                     }
-                } catch (_: Exception) {
-                    connection.errorStream
-                        ?.bufferedReader()
-                        ?.use { it.readText() }
-                        ?: ""
                 }
 
-            connection.disconnect()
+            } catch (e: Exception) {
 
-            when {
-                responseCode in 200..299 ->
-                    "Status: CONNECTED\nDashboard accepted the Android Agent."
+                runOnUiThread {
 
-                responseCode == 403 ->
-                    "Status: ERROR\nServer still blocks this request (403)."
+                    statusText.text =
+                        "CONNECTION FAILED"
 
-                responseCode == 404 ->
-                    "Status: ERROR\nAgent endpoint not found (404)."
-
-                responseCode == 400 ->
-                    "Status: ERROR\nInvalid agent information (400)."
-
-                else ->
-                    "Status: ERROR\nHTTP $responseCode\n$responseText"
+                    progressText.text =
+                        e.message ?: "Unknown error"
+                }
             }
-
-        } catch (e: Exception) {
-            "Status: CONNECTION FAILED\n${e.message ?: "Unknown error"}"
         }
     }
 
     private fun startAgent() {
-        saveSettings()
-
-        val dashboardUrl = dashboardUrlInput.text.toString().trim()
-        val routerIp = routerIpInput.text.toString().trim()
-        val agentKey = agentKeyInput.text.toString().trim()
-
-        if (dashboardUrl.isEmpty() ||
-            routerIp.isEmpty() ||
-            agentKey.isEmpty()
-        ) {
-            statusText.text = "Status: Please complete all fields."
-            return
-        }
 
         val intent =
-            android.content.Intent(this, AgentService::class.java)
+            Intent(this, AgentService::class.java)
 
-        intent.putExtra("dashboard_url", dashboardUrl)
-        intent.putExtra("router_ip", routerIp)
-        intent.putExtra("agent_key", agentKey)
+        intent.putExtra(
+            "dashboardUrl",
+            dashboardInput.text.toString().trim()
+        )
 
-        if (android.os.Build.VERSION.SDK_INT >=
-            android.os.Build.VERSION_CODES.O
-        ) {
-            startForegroundService(intent)
-        } else {
-            startService(intent)
-        }
+        intent.putExtra(
+            "routerIp",
+            routerInput.text.toString().trim()
+        )
+
+        intent.putExtra(
+            "agentKey",
+            keyInput.text.toString().trim()
+        )
+
+        intent.putExtra(
+            "agentId",
+            getAgentId()
+        )
+
+        ContextCompat.startForegroundService(
+            this,
+            intent
+        )
 
         statusText.text =
-            "Status: AGENT RUNNING\nScanning local network..."
+            "Agent Running"
+
+        progressText.text =
+            "Starting local network scan..."
+
+        progressBar.max = 254
+        progressBar.progress = 0
+
+        devicesText.text =
+            "Devices found: 0"
     }
 
     private fun stopAgent() {
-        val intent =
-            android.content.Intent(this, AgentService::class.java)
 
-        stopService(intent)
+        stopService(
+            Intent(this, AgentService::class.java)
+        )
 
-        statusText.text = "Status: Agent stopped."
+        statusText.text =
+            "Agent Stopped"
+
+        progressText.text =
+            "Ready"
+
+        progressBar.progress = 0
+
+        devicesText.text =
+            "Devices found: 0"
     }
 
     private fun getAgentId(): String {
-        val existing = prefs.getString("agent_id", null)
 
-        if (!existing.isNullOrBlank()) {
-            return existing
+        val prefs =
+            getSharedPreferences(
+                "netwatch",
+                Context.MODE_PRIVATE
+            )
+
+        var id =
+            prefs.getString(
+                "agentId",
+                null
+            )
+
+        if (id == null) {
+
+            id =
+                "android-${UUID.randomUUID()}"
+
+            prefs.edit()
+                .putString("agentId", id)
+                .apply()
         }
 
-        val created =
-            "android-${UUID.randomUUID()}"
-
-        prefs.edit()
-            .putString("agent_id", created)
-            .apply()
-
-        return created
+        return id
     }
 
     private fun encode(value: String): String {
-        return java.net.URLEncoder
-            .encode(value, "UTF-8")
+
+        return URLEncoder.encode(
+            value,
+            "UTF-8"
+        )
+    }
+
+    private fun getRequest(
+        urlString: String
+    ): Pair<Int, String> {
+
+        val connection =
+            URL(urlString)
+                .openConnection() as HttpURLConnection
+
+        return try {
+
+            connection.requestMethod =
+                "GET"
+
+            connection.connectTimeout =
+                8000
+
+            connection.readTimeout =
+                8000
+
+            connection.setRequestProperty(
+                "Accept",
+                "application/json"
+            )
+
+            val status =
+                connection.responseCode
+
+            val stream =
+                if (status in 200..299) {
+                    connection.inputStream
+                } else {
+                    connection.errorStream
+                }
+
+            val body =
+                stream
+                    ?.bufferedReader()
+                    ?.use { it.readText() }
+                    ?: ""
+
+            Pair(status, body)
+
+        } finally {
+
+            connection.disconnect()
+        }
+    }
+
+    override fun onDestroy() {
+
+        try {
+            unregisterReceiver(statusReceiver)
+        } catch (_: Exception) {
+        }
+
+        super.onDestroy()
     }
 }

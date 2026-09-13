@@ -4,13 +4,16 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.Gravity
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import org.json.JSONObject
@@ -45,7 +48,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
 
-    private val mainHandler = Handler(Looper.getMainLooper())
+    private val mainHandler =
+        Handler(Looper.getMainLooper())
 
     private var pairingRunnable: Runnable? = null
 
@@ -55,9 +59,8 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        setContentView(R.layout.activity_main)
+        createInterface()
 
-        initializeViews()
         loadSavedAgent()
 
         updateAgentKeyUI()
@@ -82,49 +85,424 @@ class MainActivity : AppCompatActivity() {
         announceAgent()
     }
 
-    private fun initializeViews() {
+    /*
+     * ---------------------------------------------------------
+     * PROGRAMMATIC UI
+     * ---------------------------------------------------------
+     *
+     * No R.layout
+     * No R.id
+     * No activity_main.xml
+     *
+     * This is why the previous "Unresolved reference layout/id"
+     * errors disappear.
+     */
 
-        agentKeyText = findViewById(R.id.agentKeyText)
-        agentIdText = findViewById(R.id.agentIdText)
-        statusText = findViewById(R.id.statusText)
-        progressText = findViewById(R.id.progressText)
+    private fun createInterface() {
 
-        routerSection = findViewById(R.id.routerSection)
-        routerIpInput = findViewById(R.id.routerIpInput)
+        val root =
+            LinearLayout(this)
 
-        copyKeyButton = findViewById(R.id.copyKeyButton)
-        generateKeyButton = findViewById(R.id.generateKeyButton)
+        root.orientation =
+            LinearLayout.VERTICAL
 
-        startButton = findViewById(R.id.startButton)
-        stopButton = findViewById(R.id.stopButton)
+        root.setPadding(
+            32,
+            40,
+            32,
+            32
+        )
+
+        root.setBackgroundColor(
+            Color.rgb(10, 15, 25)
+        )
+
+        val scroll =
+            ScrollView(this)
+
+        scroll.addView(root)
+
+        setContentView(scroll)
+
+        val title =
+            TextView(this)
+
+        title.text =
+            "NetWatch Android Agent"
+
+        title.textSize =
+            28f
+
+        title.setTextColor(
+            Color.WHITE
+        )
+
+        title.gravity =
+            Gravity.CENTER
+
+        root.addView(
+            title,
+            marginParams(16)
+        )
+
+        val subtitle =
+            TextView(this)
+
+        subtitle.text =
+            "Connect your Android device to the Network Dashboard"
+
+        subtitle.textSize =
+            14f
+
+        subtitle.setTextColor(
+            Color.LTGRAY
+        )
+
+        subtitle.gravity =
+            Gravity.CENTER
+
+        root.addView(
+            subtitle,
+            marginParams(28)
+        )
+
+        val keyLabel =
+            TextView(this)
+
+        keyLabel.text =
+            "AGENT KEY"
+
+        keyLabel.textSize =
+            13f
+
+        keyLabel.setTextColor(
+            Color.GRAY
+        )
+
+        root.addView(
+            keyLabel,
+            marginParams(8)
+        )
+
+        agentKeyText =
+            TextView(this)
+
+        agentKeyText.textSize =
+            17f
+
+        agentKeyText.setTextColor(
+            Color.WHITE
+        )
+
+        agentKeyText.setPadding(
+            18,
+            18,
+            18,
+            18
+        )
+
+        agentKeyText.setBackgroundColor(
+            Color.rgb(25, 35, 50)
+        )
+
+        root.addView(
+            agentKeyText,
+            marginParams(10)
+        )
+
+        val keyButtons =
+            LinearLayout(this)
+
+        keyButtons.orientation =
+            LinearLayout.HORIZONTAL
+
+        copyKeyButton =
+            Button(this)
+
+        copyKeyButton.text =
+            "COPY AGENT KEY"
+
+        generateKeyButton =
+            Button(this)
+
+        generateKeyButton.text =
+            "GENERATE NEW KEY"
+
+        keyButtons.addView(
+            copyKeyButton,
+            weightParams()
+        )
+
+        keyButtons.addView(
+            generateKeyButton,
+            weightParams()
+        )
+
+        root.addView(
+            keyButtons,
+            marginParams(18)
+        )
+
+        val idLabel =
+            TextView(this)
+
+        idLabel.text =
+            "AGENT ID"
+
+        idLabel.textSize =
+            13f
+
+        idLabel.setTextColor(
+            Color.GRAY
+        )
+
+        root.addView(
+            idLabel,
+            marginParams(8)
+        )
+
+        agentIdText =
+            TextView(this)
+
+        agentIdText.textSize =
+            13f
+
+        agentIdText.setTextColor(
+            Color.LTGRAY
+        )
+
+        root.addView(
+            agentIdText,
+            marginParams(12)
+        )
+
+        statusText =
+            TextView(this)
+
+        statusText.text =
+            "🟡 STARTING"
+
+        statusText.textSize =
+            18f
+
+        statusText.gravity =
+            Gravity.CENTER
+
+        statusText.setTextColor(
+            Color.WHITE
+        )
+
+        statusText.setPadding(
+            12,
+            20,
+            12,
+            20
+        )
+
+        root.addView(
+            statusText,
+            marginParams(12)
+        )
+
+        progressText =
+            TextView(this)
+
+        progressText.text =
+            "Starting Android Agent..."
+
+        progressText.textSize =
+            14f
+
+        progressText.setTextColor(
+            Color.LTGRAY
+        )
+
+        progressText.setPadding(
+            10,
+            10,
+            10,
+            20
+        )
+
+        root.addView(
+            progressText,
+            marginParams(12)
+        )
+
+        /*
+         * Router section
+         */
+
+        routerSection =
+            LinearLayout(this)
+
+        routerSection.orientation =
+            LinearLayout.VERTICAL
+
+        routerSection.setPadding(
+            20,
+            20,
+            20,
+            20
+        )
+
+        routerSection.setBackgroundColor(
+            Color.rgb(20, 30, 42)
+        )
+
+        val routerTitle =
+            TextView(this)
+
+        routerTitle.text =
+            "ROUTER"
+
+        routerTitle.textSize =
+            14f
+
+        routerTitle.setTextColor(
+            Color.GRAY
+        )
+
+        routerSection.addView(
+            routerTitle,
+            marginParams(8)
+        )
+
+        routerIpInput =
+            EditText(this)
+
+        routerIpInput.hint =
+            "Router IP e.g. 192.168.100.1"
+
+        routerIpInput.setSingleLine(true)
+
+        routerIpInput.setTextColor(
+            Color.WHITE
+        )
+
+        routerIpInput.setHintTextColor(
+            Color.GRAY
+        )
+
+        routerSection.addView(
+            routerIpInput,
+            marginParams(12)
+        )
+
+        root.addView(
+            routerSection,
+            marginParams(20)
+        )
+
+        /*
+         * Start / Stop
+         */
+
+        startButton =
+            Button(this)
+
+        startButton.text =
+            "START AGENT"
+
+        root.addView(
+            startButton,
+            marginParams(12)
+        )
+
+        stopButton =
+            Button(this)
+
+        stopButton.text =
+            "STOP AGENT"
+
+        root.addView(
+            stopButton,
+            marginParams(12)
+        )
     }
 
+    private fun marginParams(
+        bottom: Int
+    ): LinearLayout.LayoutParams {
+
+        return LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+
+            bottomMargin = bottom
+        }
+    }
+
+    private fun weightParams():
+            LinearLayout.LayoutParams {
+
+        return LinearLayout.LayoutParams(
+            0,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            1f
+        ).apply {
+
+            marginStart = 4
+            marginEnd = 4
+        }
+    }
+
+    /*
+     * ---------------------------------------------------------
+     * PERSISTENT AGENT ID
+     * ---------------------------------------------------------
+     */
+
     private fun getPreferences() =
-        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        getSharedPreferences(
+            PREFS_NAME,
+            Context.MODE_PRIVATE
+        )
 
     private fun getAgentId(): String {
 
-        val prefs = getPreferences()
+        val prefs =
+            getPreferences()
 
-        var agentId = prefs.getString(PREF_AGENT_ID, null)
+        var agentId =
+            prefs.getString(
+                PREF_AGENT_ID,
+                null
+            )
 
         if (agentId.isNullOrBlank()) {
 
-            agentId = "android-${UUID.randomUUID()}"
+            agentId =
+                "android-${UUID.randomUUID()}"
 
             prefs.edit()
-                .putString(PREF_AGENT_ID, agentId)
+                .putString(
+                    PREF_AGENT_ID,
+                    agentId
+                )
                 .apply()
         }
 
         return agentId
     }
 
+    /*
+     * ---------------------------------------------------------
+     * PERSISTENT AGENT KEY
+     * ---------------------------------------------------------
+     */
+
     private fun getAgentKey(): String {
 
-        val prefs = getPreferences()
+        val prefs =
+            getPreferences()
 
-        var agentKey = prefs.getString(PREF_AGENT_KEY, null)
+        var agentKey =
+            prefs.getString(
+                PREF_AGENT_KEY,
+                null
+            )
 
         if (agentKey.isNullOrBlank()) {
 
@@ -132,7 +510,10 @@ class MainActivity : AppCompatActivity() {
                 "NW-${UUID.randomUUID().toString().uppercase()}"
 
             prefs.edit()
-                .putString(PREF_AGENT_KEY, agentKey)
+                .putString(
+                    PREF_AGENT_KEY,
+                    agentKey
+                )
                 .apply()
         }
 
@@ -141,44 +522,63 @@ class MainActivity : AppCompatActivity() {
 
     private fun loadSavedAgent() {
 
-        val agentId = getAgentId()
-        val agentKey = getAgentKey()
-
-        agentIdText.text = agentId
-        agentKeyText.text = agentKey
+        getAgentId()
+        getAgentKey()
     }
 
     private fun updateAgentKeyUI() {
 
-        agentKeyText.text = getAgentKey()
-        agentIdText.text = getAgentId()
+        agentKeyText.text =
+            getAgentKey()
+
+        agentIdText.text =
+            getAgentId()
     }
+
+    /*
+     * ---------------------------------------------------------
+     * PAIRING UI
+     * ---------------------------------------------------------
+     */
 
     private fun updatePairingUI() {
 
         if (pairedState) {
 
-            statusText.text = "🟢 PAIRED"
+            statusText.text =
+                "🟢 PAIRED"
 
-            routerSection.visibility = View.VISIBLE
+            routerSection.visibility =
+                View.VISIBLE
 
-            startButton.visibility = View.VISIBLE
+            startButton.visibility =
+                View.VISIBLE
 
         } else {
 
-            statusText.text = "🟡 WAITING FOR BROWSER PAIRING"
+            statusText.text =
+                "🟡 WAITING FOR BROWSER PAIRING"
 
-            routerSection.visibility = View.GONE
+            routerSection.visibility =
+                View.GONE
 
-            startButton.visibility = View.GONE
+            startButton.visibility =
+                View.GONE
         }
     }
+
+    /*
+     * ---------------------------------------------------------
+     * COPY KEY
+     * ---------------------------------------------------------
+     */
 
     private fun copyAgentKey() {
 
         val clipboard =
-            getSystemService(Context.CLIPBOARD_SERVICE)
-                    as ClipboardManager
+            getSystemService(
+                Context.CLIPBOARD_SERVICE
+            ) as ClipboardManager
 
         clipboard.setPrimaryClip(
             ClipData.newPlainText(
@@ -190,6 +590,12 @@ class MainActivity : AppCompatActivity() {
         progressText.text =
             "Agent Key copied. Paste it into the browser dashboard."
     }
+
+    /*
+     * ---------------------------------------------------------
+     * GENERATE NEW KEY
+     * ---------------------------------------------------------
+     */
 
     private fun regenerateAgentKey() {
 
@@ -203,17 +609,26 @@ class MainActivity : AppCompatActivity() {
 
         getPreferences()
             .edit()
-            .putString(PREF_AGENT_KEY, newKey)
+            .putString(
+                PREF_AGENT_KEY,
+                newKey
+            )
             .apply()
 
         updateAgentKeyUI()
         updatePairingUI()
 
         progressText.text =
-            "New Agent Key generated. Waiting for browser pairing..."
+            "New Agent Key generated."
 
         announceAgent()
     }
+
+    /*
+     * ---------------------------------------------------------
+     * ANNOUNCE / CONNECT
+     * ---------------------------------------------------------
+     */
 
     private fun announceAgent() {
 
@@ -225,29 +640,26 @@ class MainActivity : AppCompatActivity() {
                     "🟡 CONNECTING TO DASHBOARD"
 
                 progressText.text =
-                    "Connecting to AppDeploy dashboard..."
+                    "Connecting..."
             }
 
-            val agentId = getAgentId()
-            val agentKey = getAgentKey()
+            val agentId =
+                encode(getAgentId())
+
+            val agentKey =
+                encode(getAgentKey())
 
             val hostname =
-                android.os.Build.MODEL ?: "Android Agent"
-
-            val encodedAgentId =
-                encode(agentId)
-
-            val encodedAgentKey =
-                encode(agentKey)
-
-            val encodedHostname =
-                encode(hostname)
+                encode(
+                    android.os.Build.MODEL
+                        ?: "Android Agent"
+                )
 
             val url =
                 "$DASHBOARD_URL/api/agent/pairing-status" +
-                        "?agentId=$encodedAgentId" +
-                        "&agentKey=$encodedAgentKey" +
-                        "&hostname=$encodedHostname"
+                        "?agentId=$agentId" +
+                        "&agentKey=$agentKey" +
+                        "&hostname=$hostname"
 
             for (attempt in 1..5) {
 
@@ -265,22 +677,11 @@ class MainActivity : AppCompatActivity() {
                     val result =
                         getRequest(url)
 
-                    val httpCode = result.first
-                    val responseBody = result.second
+                    val httpCode =
+                        result.first
 
-                    /*
-                     * IMPORTANT:
-                     *
-                     * The previous error was:
-                     *
-                     * Value <!doctype of type java.lang.String
-                     * cannot be converted to JSONObject
-                     *
-                     * That means the server returned HTML,
-                     * not JSON.
-                     *
-                     * NEVER call JSONObject() blindly.
-                     */
+                    val responseBody =
+                        result.second
 
                     if (httpCode !in 200..299) {
 
@@ -291,15 +692,18 @@ class MainActivity : AppCompatActivity() {
 
                             progressText.text =
                                 "HTTP $httpCode\n" +
-                                responseBody.take(250)
+                                responseBody.take(300)
                         }
 
                         Thread.sleep(3000)
+
                         continue
                     }
 
                     val json =
-                        parseServerResponse(responseBody)
+                        parseServerResponse(
+                            responseBody
+                        )
 
                     if (json == null) {
 
@@ -310,13 +714,17 @@ class MainActivity : AppCompatActivity() {
 
                             progressText.text =
                                 "HTTP $httpCode\n" +
-                                "Expected JSON but received:\n" +
+                                "Expected JSON.\n\n" +
                                 responseBody
-                                    .replace("\n", " ")
-                                    .take(250)
+                                    .replace(
+                                        "\n",
+                                        " "
+                                    )
+                                    .take(300)
                         }
 
                         Thread.sleep(3000)
+
                         continue
                     }
 
@@ -337,17 +745,19 @@ class MainActivity : AppCompatActivity() {
                         runOnUiThread {
 
                             statusText.text =
-                                "🔴 AGENT NOT REGISTERED"
+                                "🔴 NOT REGISTERED"
 
                             progressText.text =
                                 json.toString()
                         }
 
                         Thread.sleep(3000)
+
                         continue
                     }
 
-                    pairedState = paired
+                    pairedState =
+                        paired
 
                     if (paired) {
 
@@ -377,8 +787,7 @@ class MainActivity : AppCompatActivity() {
                             "🟡 WAITING FOR BROWSER PAIRING"
 
                         progressText.text =
-                            "Agent Key is registered.\n" +
-                            "Paste the key into the browser dashboard."
+                            "Copy the Agent Key and pair it from the browser."
                     }
 
                     startPairingPolling()
@@ -398,11 +807,7 @@ class MainActivity : AppCompatActivity() {
                             "${e.message ?: "Unknown error"}"
                     }
 
-                    try {
-                        Thread.sleep(3000)
-                    } catch (_: InterruptedException) {
-                        return@Thread
-                    }
+                    Thread.sleep(3000)
                 }
             }
 
@@ -412,11 +817,17 @@ class MainActivity : AppCompatActivity() {
                     "🔴 DASHBOARD CONNECTION FAILED"
 
                 progressText.text =
-                    "Unable to receive a valid JSON response after 5 attempts."
+                    "Unable to connect after 5 attempts."
             }
 
         }.start()
     }
+
+    /*
+     * ---------------------------------------------------------
+     * SAFE JSON PARSER
+     * ---------------------------------------------------------
+     */
 
     private fun parseServerResponse(
         body: String
@@ -425,18 +836,7 @@ class MainActivity : AppCompatActivity() {
         val trimmed =
             body.trim()
 
-        /*
-         * JSON object should begin with {
-         *
-         * If it begins with:
-         *
-         * <!doctype
-         *
-         * then the server returned the website HTML.
-         */
-
         if (!trimmed.startsWith("{")) {
-
             return null
         }
 
@@ -450,24 +850,31 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /*
+     * ---------------------------------------------------------
+     * PAIRING POLLING
+     * ---------------------------------------------------------
+     */
+
     private fun startPairingPolling() {
 
         pairingRunnable?.let {
             mainHandler.removeCallbacks(it)
         }
 
-        pairingRunnable = object : Runnable {
+        pairingRunnable =
+            object : Runnable {
 
-            override fun run() {
+                override fun run() {
 
-                checkPairing()
+                    checkPairing()
 
-                mainHandler.postDelayed(
-                    this,
-                    3000
-                )
+                    mainHandler.postDelayed(
+                        this,
+                        3000
+                    )
+                }
             }
-        }
 
         mainHandler.post(
             pairingRunnable!!
@@ -480,23 +887,11 @@ class MainActivity : AppCompatActivity() {
 
             try {
 
-                val agentId =
-                    encode(getAgentId())
-
-                val agentKey =
-                    encode(getAgentKey())
-
-                val hostname =
-                    encode(
-                        android.os.Build.MODEL
-                            ?: "Android Agent"
-                    )
-
                 val url =
                     "$DASHBOARD_URL/api/agent/pairing-status" +
-                            "?agentId=$agentId" +
-                            "&agentKey=$agentKey" +
-                            "&hostname=$hostname"
+                            "?agentId=${encode(getAgentId())}" +
+                            "&agentKey=${encode(getAgentKey())}" +
+                            "&hostname=${encode(android.os.Build.MODEL ?: "Android Agent")}"
 
                 val result =
                     getRequest(url)
@@ -512,7 +907,7 @@ class MainActivity : AppCompatActivity() {
                     runOnUiThread {
 
                         progressText.text =
-                            "Pairing check HTTP $code"
+                            "Pairing HTTP $code"
                     }
 
                     return@Thread
@@ -530,8 +925,11 @@ class MainActivity : AppCompatActivity() {
 
                         progressText.text =
                             body
-                                .replace("\n", " ")
-                                .take(250)
+                                .replace(
+                                    "\n",
+                                    " "
+                                )
+                                .take(300)
                     }
 
                     return@Thread
@@ -555,9 +953,6 @@ class MainActivity : AppCompatActivity() {
 
                         statusText.text =
                             "🔴 NOT REGISTERED"
-
-                        progressText.text =
-                            json.toString()
                     }
 
                     return@Thread
@@ -604,21 +999,27 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
 
                     progressText.text =
-                        "Pairing check failed:\n" +
+                        "Pairing error:\n" +
                         "${e.javaClass.simpleName}: " +
-                        "${e.message ?: "Unknown error"}"
+                        "${e.message}"
                 }
             }
 
         }.start()
     }
 
+    /*
+     * ---------------------------------------------------------
+     * START AGENT SERVICE
+     * ---------------------------------------------------------
+     */
+
     private fun startAgent() {
 
         if (!pairedState) {
 
             progressText.text =
-                "Pair the Android Agent in the browser first."
+                "Pair the Android Agent first."
 
             return
         }
@@ -664,11 +1065,14 @@ class MainActivity : AppCompatActivity() {
 
         try {
 
-            if (android.os.Build.VERSION.SDK_INT >=
+            if (
+                android.os.Build.VERSION.SDK_INT >=
                 android.os.Build.VERSION_CODES.O
             ) {
 
-                startForegroundService(intent)
+                startForegroundService(
+                    intent
+                )
 
             } else {
 
@@ -699,6 +1103,12 @@ class MainActivity : AppCompatActivity() {
                 "${e.message}"
         }
     }
+
+    /*
+     * ---------------------------------------------------------
+     * STOP AGENT
+     * ---------------------------------------------------------
+     */
 
     private fun stopAgent() {
 
@@ -735,6 +1145,12 @@ class MainActivity : AppCompatActivity() {
             updatePairingUI()
         }
     }
+
+    /*
+     * ---------------------------------------------------------
+     * HTTP GET
+     * ---------------------------------------------------------
+     */
 
     private fun getRequest(
         urlString: String
@@ -779,8 +1195,11 @@ class MainActivity : AppCompatActivity() {
 
             val stream =
                 if (code in 200..299) {
+
                     connection.inputStream
+
                 } else {
+
                     connection.errorStream
                 }
 
@@ -788,18 +1207,21 @@ class MainActivity : AppCompatActivity() {
                 if (stream != null) {
 
                     BufferedReader(
-                        InputStreamReader(stream)
-                    ).use { reader ->
-
-                        reader
-                            .readText()
+                        InputStreamReader(
+                            stream
+                        )
+                    ).use {
+                        it.readText()
                     }
 
                 } else {
                     ""
                 }
 
-            Pair(code, body)
+            Pair(
+                code,
+                body
+            )
 
         } finally {
 
@@ -811,11 +1233,10 @@ class MainActivity : AppCompatActivity() {
         value: String
     ): String {
 
-        return URLEncoder
-            .encode(
-                value,
-                "UTF-8"
-            )
+        return URLEncoder.encode(
+            value,
+            "UTF-8"
+        )
     }
 
     override fun onDestroy() {

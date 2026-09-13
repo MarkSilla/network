@@ -31,11 +31,14 @@ class MainActivity : ComponentActivity() {
         private const val DASHBOARD_URL =
             "https://network-device-dashboard-tydeft.v2.appdeploy.ai"
 
-        private const val PREFS_NAME = "netwatch"
+        private const val PREFS_NAME =
+            "netwatch"
 
-        private const val AGENT_ID_KEY = "agentId"
+        private const val AGENT_ID_KEY =
+            "agentId"
 
-        private const val AGENT_KEY_KEY = "agentKey"
+        private const val AGENT_KEY_KEY =
+            "agentKey"
     }
 
     private lateinit var agentKeyText: TextView
@@ -49,12 +52,16 @@ class MainActivity : ComponentActivity() {
     private lateinit var regenerateKeyButton: Button
     private lateinit var startButton: Button
 
-    private var paired = false
+    private var paired =
+        false
 
-    private var checkingPairing = false
+    private var checkingPairing =
+        false
 
     private val handler =
-        Handler(Looper.getMainLooper())
+        Handler(
+            Looper.getMainLooper()
+        )
 
     private val pairingRunnable =
         object : Runnable {
@@ -91,7 +98,8 @@ class MainActivity : ComponentActivity() {
                 val status =
                     intent.getStringExtra(
                         AgentService.EXTRA_STATUS
-                    ) ?: "Agent Running"
+                    )
+                        ?: "Agent Running"
 
                 val progress =
                     intent.getIntExtra(
@@ -113,7 +121,8 @@ class MainActivity : ComponentActivity() {
 
                 runOnUiThread {
 
-                    statusText.text = status
+                    statusText.text =
+                        status
 
                     progressText.text =
                         if (
@@ -199,7 +208,9 @@ class MainActivity : ComponentActivity() {
                 )
             }
 
-        layout.addView(title)
+        layout.addView(
+            title
+        )
 
         val subtitle =
             TextView(this).apply {
@@ -224,7 +235,9 @@ class MainActivity : ComponentActivity() {
                 )
             }
 
-        layout.addView(subtitle)
+        layout.addView(
+            subtitle
+        )
 
         /*
          * AGENT KEY LABEL
@@ -255,7 +268,9 @@ class MainActivity : ComponentActivity() {
                 )
             }
 
-        layout.addView(keyLabel)
+        layout.addView(
+            keyLabel
+        )
 
         /*
          * AGENT KEY
@@ -404,7 +419,7 @@ class MainActivity : ComponentActivity() {
             TextView(this).apply {
 
                 text =
-                    "Open the dashboard and enter the Agent Key above."
+                    "Connecting to the NetWatch Dashboard..."
 
                 textSize =
                     15f
@@ -542,6 +557,10 @@ class MainActivity : ComponentActivity() {
             layout
         )
 
+        /*
+         * STATUS RECEIVER
+         */
+
         ContextCompat.registerReceiver(
             this,
             statusReceiver,
@@ -552,18 +571,13 @@ class MainActivity : ComponentActivity() {
         )
 
         /*
-         * REGISTER ANDROID AGENT
+         * REGISTER + HEARTBEAT + PAIRING
+         *
+         * pairing-status automatically registers
+         * the Android agent when it does not exist.
          */
 
         announceAgent()
-
-        /*
-         * START PAIRING CHECKS
-         */
-
-        handler.post(
-            pairingRunnable
-        )
     }
 
     /*
@@ -669,22 +683,14 @@ class MainActivity : ComponentActivity() {
             "🟡 NEW AGENT KEY GENERATED"
 
         progressText.text =
-            "Registering the new Agent Key..."
+            "Connecting the new Agent Key..."
 
         /*
-         * Register new key.
+         * pairing-status will automatically
+         * register the new key.
          */
 
         announceAgent()
-
-        /*
-         * Start pairing checks again.
-         */
-
-        handler.postDelayed(
-            pairingRunnable,
-            1000
-        )
     }
 
     /*
@@ -725,9 +731,14 @@ class MainActivity : ComponentActivity() {
     }
 
     /*
-     * REGISTER ANDROID AGENT
+     * REGISTER + HEARTBEAT
      *
-     * Retries five times.
+     * Uses pairing-status as the Android
+     * agent registration and heartbeat endpoint.
+     *
+     * The server automatically registers
+     * the agent when the Agent ID + Agent Key
+     * are unknown.
      */
 
     private fun announceAgent() {
@@ -738,15 +749,18 @@ class MainActivity : ComponentActivity() {
         val agentKey =
             getAgentKey()
 
+        val hostname =
+            android.os.Build.MODEL
+
         statusText.text =
             "🟡 CONNECTING TO DASHBOARD"
 
         progressText.text =
-            "Registering this Android agent..."
+            "Connecting this Android agent..."
 
         thread {
 
-            var registered =
+            var connected =
                 false
 
             for (attempt in 1..5) {
@@ -757,40 +771,85 @@ class MainActivity : ComponentActivity() {
 
                 try {
 
-                    val body =
-                        """
-                        {
-                            "agentId": "${jsonEscape(agentId)}",
-                            "agentKey": "${jsonEscape(agentKey)}",
-                            "hostname": "${jsonEscape(android.os.Build.MODEL)}"
-                        }
-                        """.trimIndent()
+                    val statusUrl =
+                        "$DASHBOARD_URL/api/agent/pairing-status" +
+                        "?agentId=${encode(agentId)}" +
+                        "&agentKey=${encode(agentKey)}" +
+                        "&hostname=${encode(hostname)}"
 
                     val result =
-                        postRequest(
-                            "$DASHBOARD_URL/api/agent/register",
-                            body
+                        getRequest(
+                            statusUrl
                         )
 
-                    val accepted =
+                    val response =
+                        result.second
+
+                    val registered =
                         result.first in 200..299 &&
-                        result.second.contains(
-                            "\"ok\"",
-                            ignoreCase = true
-                        )
+                        "\"registered\"\\s*:\\s*true"
+                            .toRegex()
+                            .containsMatchIn(
+                                response
+                            )
 
-                    if (accepted) {
+                    val isPaired =
+                        result.first in 200..299 &&
+                        "\"paired\"\\s*:\\s*true"
+                            .toRegex()
+                            .containsMatchIn(
+                                response
+                            )
 
-                        registered =
+                    if (registered) {
+
+                        connected =
                             true
 
                         runOnUiThread {
 
-                            statusText.text =
-                                "🟡 WAITING FOR BROWSER PAIRING"
+                            if (isPaired) {
 
-                            progressText.text =
-                                "Agent registered. Paste this Agent Key into the browser dashboard."
+                                paired =
+                                    true
+
+                                statusText.text =
+                                    "🟢 PAIRED"
+
+                                progressText.text =
+                                    "Browser approved this Android agent. Enter Router IP to scan."
+
+                                routerInput.visibility =
+                                    View.VISIBLE
+
+                                startButton.visibility =
+                                    View.VISIBLE
+
+                                handler.removeCallbacks(
+                                    pairingRunnable
+                                )
+
+                            } else {
+
+                                statusText.text =
+                                    "🟡 WAITING FOR BROWSER PAIRING"
+
+                                progressText.text =
+                                    "Agent registered. Paste this Agent Key into the browser dashboard."
+
+                                /*
+                                 * Start pairing checks only
+                                 * after successful registration.
+                                 */
+
+                                handler.removeCallbacks(
+                                    pairingRunnable
+                                )
+
+                                handler.post(
+                                    pairingRunnable
+                                )
+                            }
                         }
 
                         break
@@ -799,10 +858,10 @@ class MainActivity : ComponentActivity() {
                     runOnUiThread {
 
                         statusText.text =
-                            "🟡 RETRYING REGISTRATION"
+                            "🟡 RETRYING CONNECTION"
 
                         progressText.text =
-                            "Registration attempt $attempt/5 failed. Retrying..."
+                            "Connection attempt $attempt/5 failed. Retrying..."
                     }
 
                 } catch (e: Exception) {
@@ -810,7 +869,7 @@ class MainActivity : ComponentActivity() {
                     runOnUiThread {
 
                         statusText.text =
-                            "🟡 RETRYING REGISTRATION"
+                            "🟡 RETRYING CONNECTION"
 
                         progressText.text =
                             "Connection attempt $attempt/5 failed. Retrying..."
@@ -823,7 +882,7 @@ class MainActivity : ComponentActivity() {
             }
 
             if (
-                !registered &&
+                !connected &&
                 !paired
             ) {
 
@@ -833,7 +892,7 @@ class MainActivity : ComponentActivity() {
                         "🔴 DASHBOARD CONNECTION FAILED"
 
                     progressText.text =
-                        "Could not register this Android agent. Tap Generate New Key to try again."
+                        "Could not connect to the dashboard. Check your internet connection and try again."
                 }
             }
         }
@@ -845,6 +904,8 @@ class MainActivity : ComponentActivity() {
      * Android asks the dashboard
      * every three seconds if the
      * browser has approved the agent.
+     *
+     * This also acts as a heartbeat.
      */
 
     private fun checkPairing() {
@@ -865,6 +926,9 @@ class MainActivity : ComponentActivity() {
         val agentKey =
             getAgentKey()
 
+        val hostname =
+            android.os.Build.MODEL
+
         thread {
 
             try {
@@ -872,51 +936,76 @@ class MainActivity : ComponentActivity() {
                 val statusUrl =
                     "$DASHBOARD_URL/api/agent/pairing-status" +
                     "?agentId=${encode(agentId)}" +
-                    "&agentKey=${encode(agentKey)}"
+                    "&agentKey=${encode(agentKey)}" +
+                    "&hostname=${encode(hostname)}"
 
                 val result =
                     getRequest(
                         statusUrl
                     )
 
+                val response =
+                    result.second
+
+                val registered =
+                    result.first in 200..299 &&
+                    "\"registered\"\\s*:\\s*true"
+                        .toRegex()
+                        .containsMatchIn(
+                            response
+                        )
+
                 val isPaired =
                     result.first in 200..299 &&
                     "\"paired\"\\s*:\\s*true"
                         .toRegex()
                         .containsMatchIn(
-                            result.second
+                            response
                         )
 
                 runOnUiThread {
 
-                    if (isPaired) {
+                    when {
 
-                        paired =
-                            true
+                        isPaired -> {
 
-                        statusText.text =
-                            "🟢 PAIRED"
+                            paired =
+                                true
 
-                        progressText.text =
-                            "Browser approved this Android agent. Enter Router IP to scan."
+                            statusText.text =
+                                "🟢 PAIRED"
 
-                        routerInput.visibility =
-                            View.VISIBLE
+                            progressText.text =
+                                "Browser approved this Android agent. Enter Router IP to scan."
 
-                        startButton.visibility =
-                            View.VISIBLE
+                            routerInput.visibility =
+                                View.VISIBLE
 
-                        handler.removeCallbacks(
-                            pairingRunnable
-                        )
+                            startButton.visibility =
+                                View.VISIBLE
 
-                    } else {
+                            handler.removeCallbacks(
+                                pairingRunnable
+                            )
+                        }
 
-                        statusText.text =
-                            "🟡 WAITING FOR BROWSER PAIRING"
+                        registered -> {
 
-                        progressText.text =
-                            "Waiting for the browser to approve this Agent Key..."
+                            statusText.text =
+                                "🟡 WAITING FOR BROWSER PAIRING"
+
+                            progressText.text =
+                                "Waiting for the browser to approve this Agent Key..."
+                        }
+
+                        else -> {
+
+                            statusText.text =
+                                "🟡 REGISTERING AGENT"
+
+                            progressText.text =
+                                "Registering this Android agent with the dashboard..."
+                        }
                     }
                 }
 
@@ -1134,6 +1223,9 @@ class MainActivity : ComponentActivity() {
 
     /*
      * JSON ESCAPING
+     *
+     * Kept for compatibility with
+     * other code that may use it.
      */
 
     private fun jsonEscape(
@@ -1165,6 +1257,9 @@ class MainActivity : ComponentActivity() {
 
     /*
      * POST REQUEST
+     *
+     * Kept because other future functionality
+     * may require POST requests.
      */
 
     private fun postRequest(

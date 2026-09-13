@@ -15,37 +15,61 @@ import java.net.URLEncoder
 class AgentService : Service() {
 
     companion object {
-        const val ACTION_STATUS = "com.netwatch.agent.STATUS"
-        const val EXTRA_STATUS = "status"
-        const val EXTRA_PROGRESS = "progress"
-        const val EXTRA_TOTAL = "total"
-        const val EXTRA_FOUND = "found"
 
-        private const val CHANNEL_ID = "netwatch_agent"
-        private const val NOTIFICATION_ID = 1001
+        const val ACTION_STATUS =
+            "com.netwatch.agent.STATUS"
 
-        private const val DASHBOARD_URL =
+        const val EXTRA_STATUS =
+            "status"
+
+        const val EXTRA_PROGRESS =
+            "progress"
+
+        const val EXTRA_TOTAL =
+            "total"
+
+        const val EXTRA_FOUND =
+            "found"
+
+        private const val CHANNEL_ID =
+            "netwatch_agent"
+
+        private const val NOTIFICATION_ID =
+            1001
+
+        private const val DEFAULT_DASHBOARD_URL =
             "https://network-device-dashboard-tydeft.v2.appdeploy.ai"
-
-        private const val ROUTER_IP = "192.168.100.1"
-
-        private const val AGENT_KEY =
-            "ed30b921-e8b1-4342-867d-6b54b7053e32-01bdbc89-ae0c-48ec-8a1b-2ef86f3b7b6d"
-
-        private const val AGENT_ID = "android-agent"
     }
 
-    private var running = false
-    private var worker: Thread? = null
+    private var running =
+        false
+
+    private var worker:
+            Thread? = null
+
+    private var dashboardUrl =
+        DEFAULT_DASHBOARD_URL
+
+    private var routerIp =
+        ""
+
+    private var agentKey =
+        ""
+
+    private var agentId =
+        ""
 
     override fun onCreate() {
+
         super.onCreate()
 
         createNotificationChannel()
 
         startForeground(
             NOTIFICATION_ID,
-            createNotification("Starting Android Agent...")
+            createNotification(
+                "Starting Android Agent..."
+            )
         )
     }
 
@@ -55,12 +79,50 @@ class AgentService : Service() {
         startId: Int
     ): Int {
 
-        if (!running) {
-            running = true
+        /*
+         * Read configuration supplied
+         * by MainActivity.
+         */
 
-            worker = Thread {
-                runAgent()
-            }
+        dashboardUrl =
+            intent?.getStringExtra(
+                "dashboardUrl"
+            )
+                ?.trim()
+                ?.trimEnd('/')
+                ?: DEFAULT_DASHBOARD_URL
+
+        routerIp =
+            intent?.getStringExtra(
+                "routerIp"
+            )
+                ?.trim()
+                ?: ""
+
+        agentKey =
+            intent?.getStringExtra(
+                "agentKey"
+            )
+                ?.trim()
+                ?: ""
+
+        agentId =
+            intent?.getStringExtra(
+                "agentId"
+            )
+                ?.trim()
+                ?: "android-agent"
+
+        if (!running) {
+
+            running =
+                true
+
+            worker =
+                Thread {
+
+                    runAgent()
+                }
 
             worker?.start()
         }
@@ -71,6 +133,27 @@ class AgentService : Service() {
     private fun runAgent() {
 
         try {
+
+            if (
+                routerIp.isBlank() ||
+                agentKey.isBlank()
+            ) {
+
+                sendStatus(
+                    "Agent configuration missing",
+                    0,
+                    254,
+                    0
+                )
+
+                stopAgent()
+
+                return
+            }
+
+            /*
+             * CONNECT TO DASHBOARD
+             */
 
             sendStatus(
                 "Connecting to dashboard...",
@@ -83,21 +166,41 @@ class AgentService : Service() {
                 "Connecting to dashboard..."
             )
 
-            val registerCode = registerAgent()
+            val registerCode =
+                registerAgent()
 
-            if (registerCode != 200) {
+            if (registerCode !in 200..299) {
 
                 sendStatus(
-                    "Dashboard registration HTTP $registerCode",
+                    "Dashboard connection HTTP $registerCode",
                     0,
                     254,
                     0
                 )
 
                 updateNotification(
-                    "Registration HTTP $registerCode"
+                    "Connection failed HTTP $registerCode"
                 )
+
+                stopAgent()
+
+                return
             }
+
+            sendStatus(
+                "🟢 Agent paired • Dashboard connected",
+                0,
+                254,
+                0
+            )
+
+            updateNotification(
+                "Agent paired • Dashboard connected"
+            )
+
+            /*
+             * SCAN LAN
+             */
 
             sendStatus(
                 "Scanning local area network...",
@@ -107,14 +210,14 @@ class AgentService : Service() {
             )
 
             updateNotification(
-                "Scanning local area network..."
+                "Scanning local network..."
             )
 
             val foundDevices =
                 mutableListOf<String>()
 
             val baseParts =
-                ROUTER_IP.split(".")
+                routerIp.split(".")
 
             if (baseParts.size != 4) {
 
@@ -126,6 +229,7 @@ class AgentService : Service() {
                 )
 
                 stopAgent()
+
                 return
             }
 
@@ -151,7 +255,10 @@ class AgentService : Service() {
 
                     if (reachable) {
 
-                        if (!foundDevices.contains(ip)) {
+                        if (
+                            !foundDevices.contains(ip)
+                        ) {
+
                             foundDevices.add(ip)
                         }
 
@@ -205,9 +312,11 @@ class AgentService : Service() {
             )
 
             /*
-             * REPORT EACH DEVICE
+             * UPLOAD DEVICES
              */
-            var uploadedCount = 0
+
+            var uploadedCount =
+                0
 
             for (ip in foundDevices) {
 
@@ -218,7 +327,9 @@ class AgentService : Service() {
                 val result =
                     reportDevice(ip)
 
-                if (result.first in 200..299) {
+                if (
+                    result.first in 200..299
+                ) {
 
                     uploadedCount++
 
@@ -254,9 +365,6 @@ class AgentService : Service() {
                 return
             }
 
-            /*
-             * KEEP THE FINAL UPLOAD RESULT VISIBLE
-             */
             sendStatus(
                 "Upload complete • $uploadedCount/${foundDevices.size} uploaded",
                 254,
@@ -273,6 +381,7 @@ class AgentService : Service() {
             /*
              * HEARTBEAT
              */
+
             while (running) {
 
                 Thread.sleep(5000)
@@ -284,17 +393,19 @@ class AgentService : Service() {
                 val heartbeatCode =
                     registerAgent()
 
-                if (heartbeatCode == 200) {
+                if (
+                    heartbeatCode in 200..299
+                ) {
 
                     sendStatus(
-                        "Agent running • $uploadedCount/${foundDevices.size} uploaded",
+                        "🟢 Agent running • $uploadedCount/${foundDevices.size} uploaded",
                         254,
                         254,
                         foundDevices.size
                     )
 
                     updateNotification(
-                        "Agent running • $uploadedCount/${foundDevices.size} uploaded"
+                        "Agent online • $uploadedCount/${foundDevices.size}"
                     )
 
                 } else {
@@ -332,10 +443,10 @@ class AgentService : Service() {
         return try {
 
             val url =
-                "$DASHBOARD_URL/api/agent/register" +
-                        "?agentId=${encode(AGENT_ID)}" +
-                        "&routerIp=${encode(ROUTER_IP)}" +
-                        "&agentKey=${encode(AGENT_KEY)}" +
+                "$dashboardUrl/api/agent/register" +
+                        "?agentId=${encode(agentId)}" +
+                        "&routerIp=${encode(routerIp)}" +
+                        "&agentKey=${encode(agentKey)}" +
                         "&hostname=${encode("Android Agent")}"
 
             val result =
@@ -356,10 +467,10 @@ class AgentService : Service() {
         return try {
 
             val url =
-                "$DASHBOARD_URL/api/agent/device" +
-                        "?agentId=${encode(AGENT_ID)}" +
-                        "&routerIp=${encode(ROUTER_IP)}" +
-                        "&agentKey=${encode(AGENT_KEY)}" +
+                "$dashboardUrl/api/agent/device" +
+                        "?agentId=${encode(agentId)}" +
+                        "&routerIp=${encode(routerIp)}" +
+                        "&agentKey=${encode(agentKey)}" +
                         "&name=${encode(ip)}" +
                         "&ipAddress=${encode(ip)}" +
                         "&macAddress=${encode("")}" +
@@ -392,7 +503,7 @@ class AgentService : Service() {
 
             val connection =
                 url.openConnection()
-                        as java.net.HttpURLConnection
+                    as java.net.HttpURLConnection
 
             connection.requestMethod =
                 "GET"
@@ -410,16 +521,23 @@ class AgentService : Service() {
                 connection.responseCode
 
             val stream =
-                if (responseCode in 200..299) {
+                if (
+                    responseCode in 200..299
+                ) {
+
                     connection.inputStream
+
                 } else {
+
                     connection.errorStream
                 }
 
             val result =
-                stream?.bufferedReader()?.use {
-                    it.readText()
-                }
+                stream
+                    ?.bufferedReader()
+                    ?.use {
+                        it.readText()
+                    }
 
             connection.disconnect()
 
@@ -457,7 +575,9 @@ class AgentService : Service() {
         val intent =
             Intent(ACTION_STATUS).apply {
 
-                setPackage(packageName)
+                setPackage(
+                    packageName
+                )
 
                 putExtra(
                     EXTRA_STATUS,
@@ -551,7 +671,8 @@ class AgentService : Service() {
 
     private fun stopAgent() {
 
-        running = false
+        running =
+            false
 
         try {
             worker?.interrupt()
@@ -567,14 +688,16 @@ class AgentService : Service() {
 
     override fun onDestroy() {
 
-        running = false
+        running =
+            false
 
         try {
             worker?.interrupt()
         } catch (_: Exception) {
         }
 
-        worker = null
+        worker =
+            null
 
         super.onDestroy()
     }

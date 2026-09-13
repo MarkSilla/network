@@ -8,6 +8,9 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import org.json.JSONArray
+import org.json.JSONObject
+import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.URL
 import java.net.URLEncoder
@@ -41,23 +44,18 @@ class AgentService : Service() {
             "https://network-device-dashboard-tydeft.v2.appdeploy.ai"
     }
 
-    private var running =
-        false
+    private var running = false
 
-    private var worker:
-            Thread? = null
+    private var worker: Thread? = null
 
     private var dashboardUrl =
         DEFAULT_DASHBOARD_URL
 
-    private var routerIp =
-        ""
+    private var routerIp = ""
 
-    private var agentKey =
-        ""
+    private var agentKey = ""
 
-    private var agentId =
-        ""
+    private var agentId = ""
 
     override fun onCreate() {
 
@@ -78,11 +76,6 @@ class AgentService : Service() {
         flags: Int,
         startId: Int
     ): Int {
-
-        /*
-         * Read configuration supplied
-         * by MainActivity.
-         */
 
         dashboardUrl =
             intent?.getStringExtra(
@@ -115,12 +108,10 @@ class AgentService : Service() {
 
         if (!running) {
 
-            running =
-                true
+            running = true
 
             worker =
                 Thread {
-
                     runAgent()
                 }
 
@@ -166,20 +157,20 @@ class AgentService : Service() {
                 "Connecting to dashboard..."
             )
 
-            val registerCode =
+            val connectionCode =
                 registerAgent()
 
-            if (registerCode !in 200..299) {
+            if (connectionCode !in 200..299) {
 
                 sendStatus(
-                    "Dashboard connection HTTP $registerCode",
+                    "Dashboard connection HTTP $connectionCode",
                     0,
                     254,
                     0
                 )
 
                 updateNotification(
-                    "Connection failed HTTP $registerCode"
+                    "Connection failed HTTP $connectionCode"
                 )
 
                 stopAgent()
@@ -315,66 +306,35 @@ class AgentService : Service() {
              * UPLOAD DEVICES
              */
 
-            var uploadedCount =
-                0
+            val uploadCode =
+                reportDevices(foundDevices)
 
-            for (ip in foundDevices) {
+            if (uploadCode !in 200..299) {
 
-                if (!running) {
-                    break
-                }
+                sendStatus(
+                    "Device upload failed • HTTP $uploadCode",
+                    254,
+                    254,
+                    foundDevices.size
+                )
 
-                val result =
-                    reportDevice(ip)
+                updateNotification(
+                    "Device upload failed • HTTP $uploadCode"
+                )
 
-                if (
-                    result.first in 200..299
-                ) {
+            } else {
 
-                    uploadedCount++
+                sendStatus(
+                    "Upload complete • ${foundDevices.size} devices",
+                    254,
+                    254,
+                    foundDevices.size
+                )
 
-                    sendStatus(
-                        "Uploaded $ip • HTTP ${result.first}",
-                        254,
-                        254,
-                        foundDevices.size
-                    )
-
-                    updateNotification(
-                        "Uploaded $uploadedCount/${foundDevices.size}"
-                    )
-
-                } else {
-
-                    sendStatus(
-                        "Upload failed $ip • HTTP ${result.first}",
-                        254,
-                        254,
-                        foundDevices.size
-                    )
-
-                    updateNotification(
-                        "Upload failed • HTTP ${result.first}"
-                    )
-                }
-
-                Thread.sleep(500)
+                updateNotification(
+                    "Upload complete • ${foundDevices.size} devices"
+                )
             }
-
-            if (!running) {
-                return
-            }
-
-            sendStatus(
-                "Upload complete • $uploadedCount/${foundDevices.size} uploaded",
-                254,
-                254,
-                foundDevices.size
-            )
-
-            updateNotification(
-                "Upload complete • $uploadedCount/${foundDevices.size}"
-            )
 
             Thread.sleep(3000)
 
@@ -398,14 +358,14 @@ class AgentService : Service() {
                 ) {
 
                     sendStatus(
-                        "🟢 Agent running • $uploadedCount/${foundDevices.size} uploaded",
+                        "🟢 Agent running • ${foundDevices.size} devices",
                         254,
                         254,
                         foundDevices.size
                     )
 
                     updateNotification(
-                        "Agent online • $uploadedCount/${foundDevices.size}"
+                        "Agent online • ${foundDevices.size} devices"
                     )
 
                 } else {
@@ -438,16 +398,22 @@ class AgentService : Service() {
         }
     }
 
+    /*
+     * DASHBOARD CONNECTION / HEARTBEAT
+     *
+     * Uses the same pairing-status endpoint
+     * used by MainActivity.
+     */
     private fun registerAgent(): Int {
 
         return try {
 
             val url =
-                "$dashboardUrl/api/agent/register" +
+                "$dashboardUrl/api/agent/pairing-status" +
                         "?agentId=${encode(agentId)}" +
-                        "&routerIp=${encode(routerIp)}" +
                         "&agentKey=${encode(agentKey)}" +
-                        "&hostname=${encode("Android Agent")}"
+                        "&hostname=${encode("Android Agent")}" +
+                        "&routerIp=${encode(routerIp)}"
 
             val result =
                 httpGetWithCode(url)
@@ -460,35 +426,108 @@ class AgentService : Service() {
         }
     }
 
-    private fun reportDevice(
-        ip: String
-    ): Pair<Int, String?> {
+    /*
+     * UPLOAD ALL SCANNED DEVICES
+     *
+     * Uses:
+     * POST /api/agent/devices
+     */
+    private fun reportDevices(
+        ips: List<String>
+    ): Int {
 
         return try {
 
-            val url =
-                "$dashboardUrl/api/agent/device" +
-                        "?agentId=${encode(agentId)}" +
-                        "&routerIp=${encode(routerIp)}" +
-                        "&agentKey=${encode(agentKey)}" +
-                        "&name=${encode(ip)}" +
-                        "&ipAddress=${encode(ip)}" +
-                        "&macAddress=${encode("")}" +
-                        "&deviceType=${encode("LAN Device")}" +
-                        "&vendor=${encode("Unknown")}" +
-                        "&connectionStatus=${encode("ACTIVE")}" +
-                        "&accessStatus=${encode("ALLOWED")}" +
-                        "&latency=${encode("0")}" +
-                        "&hostname=${encode(ip)}"
+            val devices =
+                JSONArray()
 
-            httpGetWithCode(url)
+            for (ip in ips) {
 
-        } catch (e: Exception) {
+                val device =
+                    JSONObject()
 
-            Pair(
-                -1,
-                e.message
+                device.put(
+                    "name",
+                    ip
+                )
+
+                device.put(
+                    "ipAddress",
+                    ip
+                )
+
+                device.put(
+                    "macAddress",
+                    ""
+                )
+
+                device.put(
+                    "deviceType",
+                    "LAN Device"
+                )
+
+                device.put(
+                    "vendor",
+                    "Unknown"
+                )
+
+                device.put(
+                    "connectionStatus",
+                    "ACTIVE"
+                )
+
+                device.put(
+                    "accessStatus",
+                    "ALLOWED"
+                )
+
+                device.put(
+                    "latency",
+                    0
+                )
+
+                device.put(
+                    "hostname",
+                    ip
+                )
+
+                devices.put(device)
+            }
+
+            val body =
+                JSONObject()
+
+            body.put(
+                "agentId",
+                agentId
             )
+
+            body.put(
+                "agentKey",
+                agentKey
+            )
+
+            body.put(
+                "routerIp",
+                routerIp
+            )
+
+            body.put(
+                "devices",
+                devices
+            )
+
+            val result =
+                httpPostWithCode(
+                    "$dashboardUrl/api/agent/devices",
+                    body.toString()
+                )
+
+            result.first
+
+        } catch (_: Exception) {
+
+            -1
         }
     }
 
@@ -503,7 +542,7 @@ class AgentService : Service() {
 
             val connection =
                 url.openConnection()
-                    as java.net.HttpURLConnection
+                    as HttpURLConnection
 
             connection.requestMethod =
                 "GET"
@@ -516,6 +555,92 @@ class AgentService : Service() {
 
             connection.useCaches =
                 false
+
+            val responseCode =
+                connection.responseCode
+
+            val stream =
+                if (
+                    responseCode in 200..299
+                ) {
+
+                    connection.inputStream
+
+                } else {
+
+                    connection.errorStream
+                }
+
+            val result =
+                stream
+                    ?.bufferedReader()
+                    ?.use {
+                        it.readText()
+                    }
+
+            connection.disconnect()
+
+            Pair(
+                responseCode,
+                result
+            )
+
+        } catch (e: Exception) {
+
+            Pair(
+                -1,
+                e.message
+            )
+        }
+    }
+
+    private fun httpPostWithCode(
+        urlString: String,
+        body: String
+    ): Pair<Int, String?> {
+
+        return try {
+
+            val url =
+                URL(urlString)
+
+            val connection =
+                url.openConnection()
+                    as HttpURLConnection
+
+            connection.requestMethod =
+                "POST"
+
+            connection.connectTimeout =
+                10000
+
+            connection.readTimeout =
+                10000
+
+            connection.useCaches =
+                false
+
+            connection.doOutput =
+                true
+
+            connection.setRequestProperty(
+                "Content-Type",
+                "application/json; charset=UTF-8"
+            )
+
+            connection.setRequestProperty(
+                "Accept",
+                "application/json"
+            )
+
+            connection.outputStream
+                .bufferedWriter(Charsets.UTF_8)
+                .use { writer ->
+
+                    writer.write(body)
+
+                    writer.flush()
+                }
 
             val responseCode =
                 connection.responseCode
@@ -671,8 +796,7 @@ class AgentService : Service() {
 
     private fun stopAgent() {
 
-        running =
-            false
+        running = false
 
         try {
             worker?.interrupt()
@@ -688,16 +812,14 @@ class AgentService : Service() {
 
     override fun onDestroy() {
 
-        running =
-            false
+        running = false
 
         try {
             worker?.interrupt()
         } catch (_: Exception) {
         }
 
-        worker =
-            null
+        worker = null
 
         super.onDestroy()
     }

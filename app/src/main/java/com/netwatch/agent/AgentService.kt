@@ -4,42 +4,59 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.Context
 import android.content.Intent
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
+import androidx.core.app.NotificationCompat
+import kotlinx.coroutines.*
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.BufferedReader
+import java.io.InputStreamReader
 import java.net.HttpURLConnection
+import java.net.InetAddress
 import java.net.URL
-import java.util.UUID
-import kotlin.concurrent.thread
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class AgentService : Service() {
 
-    companion object {
-        const val START = "START"
-        private const val CHANNEL = "netwatch_agent"
-    }
+    private val serviceScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO
+    )
 
     private var running = false
-    private lateinit var agentId: String
+
+    private val prefs by lazy {
+        getSharedPreferences("agent_config", Context.MODE_PRIVATE)
+    }
+
+    private val agentId: String
+        get() = prefs.getString("agent_id", null) ?: run {
+            val id = "android-" + System.currentTimeMillis()
+            prefs.edit().putString("agent_id", id).apply()
+            id
+        }
+
+    private val dashboardUrl: String
+        get() = prefs.getString("dashboard_url", "")?.trimEnd('/') ?: ""
+
+    private val routerIp: String
+        get() = prefs.getString("router_ip", "192.168.100.1") ?: "192.168.100.1"
+
+    private val agentKey: String
+        get() = prefs.getString("agent_key", "") ?: ""
 
     override fun onCreate() {
         super.onCreate()
 
-        agentId = getSharedPreferences("agent", MODE_PRIVATE)
-            .getString("agentId", null)
-            ?: UUID.randomUUID().toString().also {
-                getSharedPreferences("agent", MODE_PRIVATE)
-                    .edit()
-                    .putString("agentId", it)
-                    .apply()
-            }
-
-        createChannel()
+        createNotificationChannel()
 
         startForeground(
             1001,
-            notification("NetWatch agent is running")
+            createNotification("NetWatch Agent is starting...")
         )
     }
 
@@ -52,184 +69,720 @@ class AgentService : Service() {
         if (!running) {
             running = true
 
-            thread(name = "netwatch-agent") {
-                while (running) {
-                    try {
-                        tick()
-                    } catch (_: Exception) {
-                    }
-
-                    Thread.sleep(5000)
-                }
+            serviceScope.launch {
+                agentLoop()
             }
         }
 
         return START_STICKY
     }
 
-    private fun tick() {
-        val prefs = getSharedPreferences("agent", MODE_PRIVATE)
+    private suspend fun agentLoop() {
 
-        val dashboard = prefs
-            .getString("dashboard", "")
-            ?.trim()
-            ?.trimEnd('/')
-            ?: return
+        while (running) {
 
-        val router = prefs
-            .getString("router", "")
-            ?.trim()
-            ?: return
+            try {
 
-        val key = prefs
-            .getString("key", "")
-            ?.trim()
-            ?: return
+                if (dashboardUrl.isNotBlank() && agentKey.isNotBlank()) {
 
-        if (dashboard.isEmpty() || router.isEmpty() || key.isEmpty()) {
-            return
-        }
+                    registerAgent()
 
-        val devices = readNeighbors()
+                    val devices = scanLocalNetwork()
 
-        postJson(
-            "$dashboard/api/agent/register",
-            """{"agentId":"${esc(agentId)}","routerIp":"${esc(router)}","hostname":"${esc(Build.MODEL)}","agentKey":"${esc(key)}"}"""
-        )
+                    sendDevices(devices)
 
-        val body = buildString {
-            append(
-                """{"agentId":"${esc(agentId)}","routerIp":"${esc(router)}","agentKey":"${esc(key)}","devices":["""
-            )
-
-            devices.forEachIndexed { i, device ->
-                if (i > 0) {
-                    append(',')
+                    updateNotification(
+                        "Scanning LAN • ${devices.length()} devices found"
+                    )
                 }
 
-                append(device)
+            } catch (e: Exception) {
+
+                updateNotification(
+                    "Agent error: ${e.message ?: "Unknown error"}"
+                )
             }
 
-            append("]}")
+            delay(5000)
+        }
+    }
+
+    /**
+     * Gets the phone's Wi-Fi IP address.
+     */
+    @Suppress("DEPRECATION")
+    private fun getWifiIpAddress(): String? {
+
+        val wifiManager =
+            applicationContext.getSystemService(Context.WIFI_SERVICE)
+                    as? WifiManager
+                ?: return null
+
+        val ip = wifiManager.connectionInfo.ipAddress
+
+        if (ip == 0) return null
+
+        return listOf(
+            ip and 0xff,
+            ip shr 8 and 0xff,
+            ip shr 16 and 0xff,
+            ip shr 24 and 0xff
+        ).joinToString(".")
+    }
+
+    /**
+     * Gets DHCP netmask from the Wi-Fi connection.
+     */
+    @Suppress("DEPRECATION")
+    private fun getNetmask(): String {
+
+        val wifiManager =
+            applicationContext.getSystemService(Context.WIFI_SERVICE)
+                    as? WifiManager
+                ?: return "255.255.255.0"
+
+        val mask = wifiManager.dhcpInfo?.netmask ?: 0
+
+        if (mask == 0) {
+            return "255.255.255.0"
         }
 
+        return listOf(
+            mask and 0xff,
+            mask shr 8 and 0xff,
+            mask shr 16 and 0xff,
+            mask shr 24 and 0xff
+        ).joinToString(".")
+    }
+
+    /**
+     * Converts an IPv4 address into an unsigned integer.
+     */
+    private fun ipToLong(ip: String): Long {
+
+        val parts = ip.split(".")
+
+        return (
+            (parts[0].toLong() shl 24) or
+            (parts[1].toLong() shl 16) or
+            (parts[2].toLong() shl 8) or
+            parts[3].toLong()
+        ) and 0xffffffffL
+    }
+
+    /**
+     * Converts an unsigned integer into IPv4.
+     */
+    private fun longToIp(value: Long): String {
+
+        return listOf(
+            (value shr 24) and 255,
+            (value shr 16) and 255,
+            (value shr 8) and 255,
+            value and 255
+        ).joinToString(".")
+    }
+
+    /**
+     * Calculates the local subnet.
+     */
+    private fun calculateSubnet(
+        ip: String,
+        netmask: String
+    ): Pair<Long, Long> {
+
+        val ipLong = ipToLong(ip)
+        val maskLong = ipToLong(netmask)
+
+        val network = ipLong and maskLong
+        val broadcast = network or (maskLong.inv() and 0xffffffffL)
+
+        return Pair(network, broadcast)
+    }
+
+    /**
+     * Performs LAN discovery.
+     *
+     * Uses:
+     * 1. ICMP reachability where available
+     * 2. TCP connection attempts on common ports
+     * 3. ARP table
+     */
+    private suspend fun scanLocalNetwork(): JSONArray =
+        withContext(Dispatchers.IO) {
+
+            val result = JSONArray()
+
+            val phoneIp = getWifiIpAddress()
+
+            if (phoneIp == null) {
+                return@withContext result
+            }
+
+            val netmask = getNetmask()
+
+            val subnet = calculateSubnet(
+                phoneIp,
+                netmask
+            )
+
+            val network = subnet.first
+            val broadcast = subnet.second
+
+            val totalHosts = broadcast - network - 1
+
+            /*
+             * Prevent huge scans.
+             * Maximum 1024 addresses.
+             */
+            if (totalHosts > 1024) {
+                return@withContext scanUsingArpOnly(
+                    result,
+                    phoneIp
+                )
+            }
+
+            val executor = Executors.newFixedThreadPool(24)
+
+            try {
+
+                val futures = mutableListOf<java.util.concurrent.Future<*>>()
+
+                var address = network + 1
+
+                while (address < broadcast) {
+
+                    val targetIp = longToIp(address)
+
+                    if (targetIp != phoneIp) {
+
+                        futures += executor.submit {
+
+                            if (isHostReachable(targetIp)) {
+
+                                addDevice(
+                                    result,
+                                    targetIp,
+                                    phoneIp
+                                )
+                            }
+                        }
+                    }
+
+                    address++
+                }
+
+                futures.forEach { future ->
+
+                    try {
+                        future.get(
+                            1500,
+                            TimeUnit.MILLISECONDS
+                        )
+                    } catch (_: Exception) {
+                    }
+                }
+
+                executor.shutdown()
+
+                executor.awaitTermination(
+                    8,
+                    TimeUnit.SECONDS
+                )
+
+            } finally {
+
+                executor.shutdownNow()
+            }
+
+            /*
+             * Read ARP table after active scan.
+             */
+            readArpTable(
+                result,
+                phoneIp
+            )
+
+            /*
+             * Always include router if it is reachable.
+             */
+            if (
+                routerIp.isNotBlank() &&
+                routerIp != phoneIp &&
+                isHostReachable(routerIp)
+            ) {
+
+                addDevice(
+                    result,
+                    routerIp,
+                    phoneIp,
+                    true
+                )
+            }
+
+            result
+        }
+
+    /**
+     * Fallback when subnet is too large.
+     */
+    private fun scanUsingArpOnly(
+        result: JSONArray,
+        phoneIp: String
+    ): JSONArray {
+
+        readArpTable(
+            result,
+            phoneIp
+        )
+
+        return result
+    }
+
+    /**
+     * Tests whether a device responds.
+     */
+    private fun isHostReachable(ip: String): Boolean {
+
+        try {
+
+            val address = InetAddress.getByName(ip)
+
+            if (
+                address.isReachable(
+                    180
+                )
+            ) {
+                return true
+            }
+
+        } catch (_: Exception) {
+        }
+
+        /*
+         * Try common TCP ports.
+         */
+        val ports = intArrayOf(
+            80,
+            443,
+            8080,
+            22,
+            53,
+            445,
+            139
+        )
+
+        for (port in ports) {
+
+            try {
+
+                java.net.Socket().use { socket ->
+
+                    socket.connect(
+                        java.net.InetSocketAddress(
+                            ip,
+                            port
+                        ),
+                        180
+                    )
+
+                    return true
+                }
+
+            } catch (_: Exception) {
+            }
+        }
+
+        return false
+    }
+
+    /**
+     * Reads Android/Linux ARP table.
+     */
+    private fun readArpTable(
+        result: JSONArray,
+        phoneIp: String
+    ) {
+
+        try {
+
+            val process =
+                Runtime.getRuntime().exec(
+                    arrayOf(
+                        "cat",
+                        "/proc/net/arp"
+                    )
+                )
+
+            val reader =
+                BufferedReader(
+                    InputStreamReader(
+                        process.inputStream
+                    )
+                )
+
+            reader.useLines { lines ->
+
+                lines.drop(1).forEach { line ->
+
+                    val parts =
+                        line.trim()
+                            .split(Regex("\\s+"))
+
+                    if (parts.size >= 4) {
+
+                        val ip = parts[0]
+                        val mac = parts[3]
+
+                        if (
+                            ip != phoneIp &&
+                            mac != "00:00:00:00:00:00" &&
+                            mac.contains(":")
+                        ) {
+
+                            addDevice(
+                                result,
+                                ip,
+                                phoneIp,
+                                ip == routerIp,
+                                mac
+                            )
+                        }
+                    }
+                }
+            }
+
+        } catch (_: Exception) {
+        }
+    }
+
+    /**
+     * Adds a device without creating duplicates.
+     */
+    private fun addDevice(
+        result: JSONArray,
+        ip: String,
+        phoneIp: String,
+        isRouter: Boolean = false,
+        macAddress: String = "Unknown"
+    ) {
+
+        /*
+         * Prevent duplicate IP entries.
+         */
+        for (i in 0 until result.length()) {
+
+            val existing =
+                result.optJSONObject(i)
+
+            if (
+                existing?.optString(
+                    "ipAddress"
+                ) == ip
+            ) {
+
+                /*
+                 * Update MAC if ARP found one.
+                 */
+                if (
+                    macAddress != "Unknown" &&
+                    existing.optString(
+                        "macAddress"
+                    ) == "Unknown"
+                ) {
+
+                    existing.put(
+                        "macAddress",
+                        macAddress
+                    )
+                }
+
+                return
+            }
+        }
+
+        val device = JSONObject()
+
+        device.put(
+            "id",
+            "$ip-$macAddress"
+        )
+
+        device.put(
+            "name",
+            if (isRouter) {
+                "Router $ip"
+            } else {
+                "Unknown $ip"
+            }
+        )
+
+        device.put(
+            "ipAddress",
+            ip
+        )
+
+        device.put(
+            "macAddress",
+            macAddress
+        )
+
+        device.put(
+            "deviceType",
+            if (isRouter) {
+                "Router"
+            } else {
+                "Unknown"
+            }
+        )
+
+        device.put(
+            "vendor",
+            "Unknown"
+        )
+
+        device.put(
+            "connectionStatus",
+            "ACTIVE"
+        )
+
+        device.put(
+            "accessStatus",
+            "ALLOWED"
+        )
+
+        device.put(
+            "latency",
+            0
+        )
+
+        device.put(
+            "discoverySource",
+            "android-lan-scan"
+        )
+
+        result.put(device)
+    }
+
+    /**
+     * Registers Android agent with dashboard.
+     */
+    private fun registerAgent() {
+
+        val body = JSONObject()
+
+        body.put(
+            "agentId",
+            agentId
+        )
+
+        body.put(
+            "routerIp",
+            routerIp
+        )
+
+        body.put(
+            "agentKey",
+            agentKey
+        )
+
+        body.put(
+            "platform",
+            "android"
+        )
+
+        body.put(
+            "version",
+            "1.0.0"
+        )
+
         postJson(
-            "$dashboard/api/agent/devices",
+            "$dashboardUrl/api/agent/register",
             body
         )
     }
 
-    private fun readNeighbors(): List<String> {
-        val result = mutableListOf<String>()
-        val file = java.io.File("/proc/net/arp")
-
-        if (!file.exists()) {
-            return result
-        }
-
-        BufferedReader(file.reader()).useLines { lines ->
-            lines.drop(1).forEach { line ->
-
-                val parts = line
-                    .trim()
-                    .split(Regex("\\s+"))
-
-                if (parts.size >= 4 && parts[0] != "0.0.0.0") {
-
-                    val ip = parts[0]
-                    val mac = parts[3].uppercase()
-
-                    if (
-                        mac != "00:00:00:00:00:00" &&
-                        mac.contains(":")
-                    ) {
-                        result.add(
-                            """{"id":"${esc(ip)}-${esc(mac)}","name":"Device ${esc(ip)}","ipAddress":"${esc(ip)}","macAddress":"${esc(mac)}","deviceType":"Unknown","vendor":"Unknown","connectionStatus":"ACTIVE","accessStatus":"ALLOWED","latency":0}"""
-                        )
-                    }
-                }
-            }
-        }
-
-        return result.distinct()
-    }
-
-    private fun postJson(
-        url: String,
-        body: String
+    /**
+     * Sends discovered devices to dashboard.
+     */
+    private fun sendDevices(
+        devices: JSONArray
     ) {
-        val connection =
-            URL(url).openConnection() as HttpURLConnection
 
-        connection.requestMethod = "POST"
-        connection.connectTimeout = 5000
-        connection.readTimeout = 5000
-        connection.doOutput = true
+        val body = JSONObject()
 
-        connection.setRequestProperty(
-            "Content-Type",
-            "application/json"
+        body.put(
+            "agentId",
+            agentId
         )
 
-        connection.outputStream.use {
-            it.write(body.toByteArray(Charsets.UTF_8))
-        }
+        body.put(
+            "routerIp",
+            routerIp
+        )
 
-        try {
-            connection.inputStream.close()
+        body.put(
+            "agentKey",
+            agentKey
+        )
+
+        body.put(
+            "devices",
+            devices
+        )
+
+        postJson(
+            "$dashboardUrl/api/agent/devices",
+            body
+        )
+    }
+
+    /**
+     * Sends JSON POST request.
+     */
+    private fun postJson(
+        endpoint: String,
+        body: JSONObject
+    ): String? {
+
+        var connection: HttpURLConnection? = null
+
+        return try {
+
+            val url =
+                URL(endpoint)
+
+            connection =
+                url.openConnection()
+                        as HttpURLConnection
+
+            connection.requestMethod = "POST"
+
+            connection.setRequestProperty(
+                "Content-Type",
+                "application/json"
+            )
+
+            connection.setRequestProperty(
+                "Accept",
+                "application/json"
+            )
+
+            connection.connectTimeout =
+                10000
+
+            connection.readTimeout =
+                10000
+
+            connection.doOutput = true
+
+            connection.outputStream.use { output ->
+
+                output.write(
+                    body.toString()
+                        .toByteArray(
+                            Charsets.UTF_8
+                        )
+                )
+            }
+
+            val stream =
+                if (
+                    connection.responseCode in 200..299
+                ) {
+                    connection.inputStream
+                } else {
+                    connection.errorStream
+                }
+
+            stream?.use {
+
+                BufferedReader(
+                    InputStreamReader(it)
+                ).readText()
+            }
+
+        } catch (_: Exception) {
+
+            null
+
         } finally {
-            connection.disconnect()
+
+            connection?.disconnect()
         }
     }
 
-    private fun esc(value: String): String {
-        return value
-            .replace("\\", "\\\\")
-            .replace("\"", "\\\"")
+    private fun createNotification(
+        text: String
+    ): Notification {
+
+        return NotificationCompat.Builder(
+            this,
+            "netwatch_agent"
+        )
+            .setContentTitle(
+                "NetWatch Android Agent"
+            )
+            .setContentText(text)
+            .setSmallIcon(
+                android.R.drawable.stat_sys_data_wifi
+            )
+            .setOngoing(true)
+            .build()
     }
 
-    private fun createChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+    private fun updateNotification(
+        text: String
+    ) {
 
-            val manager =
-                getSystemService(NotificationManager::class.java)
+        val manager =
+            getSystemService(
+                NotificationManager::class.java
+            )
 
-            manager.createNotificationChannel(
+        manager.notify(
+            1001,
+            createNotification(text)
+        )
+    }
+
+    private fun createNotificationChannel() {
+
+        if (
+            Build.VERSION.SDK_INT >=
+            Build.VERSION_CODES.O
+        ) {
+
+            val channel =
                 NotificationChannel(
-                    CHANNEL,
+                    "netwatch_agent",
                     "NetWatch Agent",
                     NotificationManager.IMPORTANCE_LOW
                 )
+
+            val manager =
+                getSystemService(
+                    NotificationManager::class.java
+                )
+
+            manager.createNotificationChannel(
+                channel
             )
         }
     }
 
-    private fun notification(text: String): Notification {
-
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-
-            Notification.Builder(this, CHANNEL)
-                .setContentTitle("NetWatch Android Agent")
-                .setContentText(text)
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .build()
-
-        } else {
-
-            Notification.Builder(this)
-                .setContentTitle("NetWatch Android Agent")
-                .setContentText(text)
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .build()
-        }
-    }
-
     override fun onDestroy() {
+
         running = false
+
+        serviceScope.cancel()
+
         super.onDestroy()
     }
 
-    override fun onBind(intent: Intent?): IBinder? {
+    override fun onBind(
+        intent: Intent?
+    ): IBinder? {
         return null
     }
 }
